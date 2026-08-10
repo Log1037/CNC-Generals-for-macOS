@@ -35,6 +35,13 @@
  * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #include "render2dsentence.h"
+// GeneralsX @feature 10/08/2026 OS/2 PANOSE access, used to tell a Song face from a Hei face.
+// Kept in the .cpp so the SFNT table types do not leak into every translation unit.
+#if defined(SAGE_USE_FREETYPE) && !defined(_WIN32)
+	#include FT_TRUETYPE_TABLES_H
+	#include <unistd.h>
+	#include <limits.h>
+#endif
 #include "surfaceclass.h"
 #include "texture.h"
 #include "wwprofile.h"
@@ -1172,6 +1179,7 @@ FontCharsClass::FontCharsClass () :
 #if defined(SAGE_USE_FREETYPE) && !defined(_WIN32)
 	FTLibrary( nullptr ),
 	FTFace( nullptr ),
+	FreetypeFaceIndex( 0 ),
 #endif
 	CurrPixelOffset( 0 ),
 	PointSize( 0 ),
@@ -1227,16 +1235,6 @@ FontCharsClass::Get_Char_Data (WCHAR ch)
 	}
  	else if ( AlternateUnicodeFont && this != AlternateUnicodeFont )
 	{
-		// GeneralsX @bugfix fbraz 03/06/2026 Log ALL Cyrillic delegations for diagnostics
-		if (ch >= 0x0400 && ch <= 0x04FF) {
-			char log_buffer[512];
-			sprintf(log_buffer,
-				"[GX-ISSUE144] Get_Char_Data delegate U+%04X from=%s to=%s",
-				(unsigned int)ch,
-				GDIFontName.str(),
-				AlternateUnicodeFont->GDIFontName.str());
-			fprintf(stderr, "%s\n", log_buffer);
-		}
 		return AlternateUnicodeFont->Get_Char_Data( glyph );
 	}
 	else
@@ -1698,13 +1696,455 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 
 ////////////////////////////////////////////////////////////////////////////////////
 //
+//	CJK serif ("Song") font resolution
+//
+// GeneralsX @feature 10/08/2026 Resolve the Chinese UI font at runtime instead of relying on
+// a font the project is not allowed to redistribute.
+//
+// THE PROBLEM. Language.ini asks for the family by its Chinese name:
+//
+//     UnicodeFontName = <CB CE CC E5>          ; "SongTi", GBK-encoded
+//
+// Three separate things then go wrong on a non-Windows host:
+//
+//  1. ENCODING. Language.ini is GBK (the retail Simplified Chinese file, CRLF, 2003). The
+//     engine hands those bytes to FcNameParse() verbatim -- nothing in the language or font
+//     path converts them, verified by grep. Fontconfig expects UTF-8, so it parses garbage.
+//
+//  2. NO FAILURE SIGNAL. FcFontMatch() never reports "not found": it returns the best
+//     remaining candidate. With an unparseable family that is the default sans -- PingFang on
+//     macOS. So the CJK UI silently rendered in a sans-serif face while the code path looked
+//     like it had succeeded. Even a correct UTF-8 request misses, because the macOS family is
+//     "Songti SC" and its Chinese alias is a different string than the one the INI asks for.
+//
+//  3. FACE INDEX. Font collections do not put Regular first. macOS Songti.ttc face 0 is
+//     "Songti SC Black"; Regular is face 6. Loading face 0 renders every glyph in the
+//     heaviest weight available.
+//
+// THE FIX. Recognize the family aliases ourselves, in both encodings, and resolve them to a
+// concrete (file, face index) pair that is verified to be a serif face with CJK coverage.
+//
+// A candidate must pass all three checks, so a mislabelled font cannot slip through:
+//   - it has a Unicode charmap;
+//   - it actually contains CJK ideographs (U+6C49, U+4E2D, U+56FD);
+//   - its OS/2 PANOSE serif style is not one of the sans values (11-15).
+//
+// That last check is load-bearing. A font file named simsun.ttc that declares the family
+// "SimSun" is not necessarily SimSun -- font packs circulate in which every Windows filename
+// contains the same sans-serif outlines. PANOSE serif style 11 ("Normal Sans") is how such a
+// file identifies itself, whereas genuine SimSun reports 1 ("No Fit") and Songti SC reports 1
+// and Noto Serif CJK SC reports 2 ("Cove"). Rejecting sans here is what keeps a Song request
+// from being answered with a Hei face.
+//
+// Priority order, highest first:
+//   0. GX_CJK_SERIF_FONT -- explicit override, a file path or a family name.
+//   1. fonts/ under the runtime directory -- the Song font the deploy script fetched, or one the
+//      user dropped in themselves.
+//   2. The host's own Song face -- Songti SC / STSong on macOS, SimSun on Windows.
+//   3. An open-licensed Song family via fontconfig -- Source Han Serif / Noto Serif CJK.
+//
+// Nothing is installed system-wide by this code: it only ever points FreeType at a file that is
+// already on disk, whether the host shipped it, the deploy script fetched it into the runtime, or
+// the user chose to drop it in. Steps 2 and 3 can both come up empty on a machine with no Song
+// font at all, which is why the deploy script puts one in fonts/ rather than trusting the search.
+////////////////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+
+struct GXSongFace
+{
+	StringClass	Path;
+	int			FaceIndex;
+	bool		Resolved;
+	GXSongFace() : FaceIndex( 0 ), Resolved( false ) {}
+};
+
+//
+//	Is this request for a "Song" family, under any of the names it goes by?
+//
+// The GBK spellings are the ones that actually arrive from a retail Language.ini; the UTF-8
+// spellings cover a hand-edited or re-encoded file. Both are written as escapes so this file
+// stays pure ASCII and cannot be corrupted by an editor guessing an encoding.
+static bool GX_Is_Song_Family( const char *name )
+{
+	if ( name == nullptr ) {
+		return false;
+	}
+
+	static const char *kSongAliases[] = {
+		"SimSun",
+		"NSimSun",
+		"Songti SC",
+		"Songti",
+		"STSong",
+		"\xCB\xCE\xCC\xE5",					// GBK "SongTi"
+		"\xD0\xC2\xCB\xCE\xCC\xE5",			// GBK "XinSongTi" (NSimSun)
+		"\xE5\xAE\x8B\xE4\xBD\x93",			// UTF-8 "SongTi"
+		"\xE6\x96\xB0\xE5\xAE\x8B\xE4\xBD\x93",	// UTF-8 "XinSongTi"
+	};
+
+	for ( size_t i = 0; i < sizeof(kSongAliases) / sizeof(kSongAliases[0]); ++i ) {
+		if ( strcasecmp( name, kSongAliases[i] ) == 0 ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+//
+//	Can this face render Chinese, and is it the kind of design we asked for?
+//
+// GeneralsX @tweak 10/08/2026 The serif test is now optional. Rejecting sans faces is right when
+// we are guessing (it is what catches a sans face wearing the filename "simsun.ttc"), but wrong
+// when the user named a font explicitly: PingFang SC is PANOSE serifStyle 11, so applying the
+// serif test to an override made it impossible to select on purpose. Coverage is always required;
+// a face with no ideographs is useless whoever asked for it.
+static bool GX_Face_Is_Usable_CJK( FT_Face face, bool require_serif )
+{
+	if ( face == nullptr ) {
+		return false;
+	}
+	if ( FT_Select_Charmap( face, FT_ENCODING_UNICODE ) != 0 ) {
+		return false;
+	}
+
+	static const FT_ULong kProbe[] = { 0x6C49, 0x4E2D, 0x56FD };	// Han, Zhong, Guo
+	for ( size_t i = 0; i < sizeof(kProbe) / sizeof(kProbe[0]); ++i ) {
+		if ( FT_Get_Char_Index( face, kProbe[i] ) == 0 ) {
+			return false;
+		}
+	}
+
+	if ( require_serif ) {
+		const TT_OS2 *os2 = (const TT_OS2 *)FT_Get_Sfnt_Table( face, FT_SFNT_OS2 );
+		if ( os2 != nullptr && os2->version != 0xFFFF ) {
+			const FT_Byte serif_style = os2->panose[1];
+			if ( serif_style >= 11 && serif_style <= 15 ) {
+				return false;	// Normal/Obtuse/Perp sans, Flared, Rounded
+			}
+		}
+	}
+	return true;
+}
+
+//
+//	Pick the best face inside a (possibly collection) font file.
+//
+// Scored rather than first-match: a collection can hold several usable faces and we want the
+// Regular weight of the preferred family, not merely the first face that parses.
+static int GX_Best_Face_In_File( FT_Library lib, const char *path, const char *preferred_family,
+	bool require_serif )
+{
+	FT_Face probe = nullptr;
+	if ( FT_New_Face( lib, path, 0, &probe ) != 0 ) {
+		return -1;
+	}
+	const long face_count = probe->num_faces > 0 ? probe->num_faces : 1;
+	FT_Done_Face( probe );
+
+	int best_index = -1;
+	int best_score = -1;
+	for ( long i = 0; i < face_count; ++i ) {
+		FT_Face face = nullptr;
+		if ( FT_New_Face( lib, path, i, &face ) != 0 ) {
+			continue;
+		}
+
+		if ( GX_Face_Is_Usable_CJK( face, require_serif ) ) {
+			int score = 0;
+			const char *family = face->family_name != nullptr ? face->family_name : "";
+			const char *style  = face->style_name  != nullptr ? face->style_name  : "";
+
+			if ( preferred_family != nullptr && strcasecmp( family, preferred_family ) == 0 ) {
+				score += 4;
+			}
+			if ( strcasecmp( style, "Regular" ) == 0 ) {
+				score += 2;
+			}
+			// Reject nothing outright on weight, but prefer an unstyled face.
+			if ( (face->style_flags & (FT_STYLE_FLAG_BOLD | FT_STYLE_FLAG_ITALIC)) == 0 ) {
+				score += 1;
+			}
+
+			if ( score > best_score ) {
+				best_score = score;
+				best_index = (int)i;
+			}
+		}
+		FT_Done_Face( face );
+	}
+	return best_index;
+}
+
+//
+//	Ask fontconfig for a family, and only accept it if it really is that family.
+//
+// FcFontMatch() always answers, so the returned family must be compared against the request.
+// Without that check every miss would look like a hit and resolve to the default sans.
+static bool GX_Resolve_Family_Via_FontConfig( FT_Library lib, const char *family,
+	StringClass &out_path, int &out_index, bool require_serif )
+{
+	FcPattern *pattern = FcNameParse( (const FcChar8 *)family );
+	if ( pattern == nullptr ) {
+		return false;
+	}
+	FcPatternAddInteger( pattern, FC_WEIGHT, FC_WEIGHT_REGULAR );
+	FcPatternAddInteger( pattern, FC_SLANT, FC_SLANT_ROMAN );
+	FcConfigSubstitute( nullptr, pattern, FcMatchPattern );
+	FcDefaultSubstitute( pattern );
+
+	FcResult result = FcResultNoMatch;
+	FcPattern *match = FcFontMatch( nullptr, pattern, &result );
+	bool ok = false;
+
+	if ( match != nullptr && result == FcResultMatch ) {
+		FcChar8 *file = nullptr;
+		FcChar8 *got_family = nullptr;
+		int index = 0;
+		if ( FcPatternGetString( match, FC_FILE, 0, &file ) == FcResultMatch && file != nullptr ) {
+			if ( FcPatternGetInteger( match, FC_INDEX, 0, &index ) != FcResultMatch ) {
+				index = 0;
+			}
+
+			// Fontconfig substituted something else -- treat as a miss, not a match.
+			//
+			// GeneralsX @bugfix 10/08/2026 Every FC_FAMILY value has to be checked, not just the
+			// first. A font carries one name per language and fontconfig returns them in the
+			// system's order, so on a Chinese-locale machine index 0 of PingFang SC is the
+			// localized "苹方-简" and comparing against only that rejected a perfectly good match.
+			bool family_matches = false;
+			for ( int n = 0; FcPatternGetString( match, FC_FAMILY, n, &got_family ) == FcResultMatch; ++n ) {
+				if ( got_family != nullptr && strcasecmp( (const char *)got_family, family ) == 0 ) {
+					family_matches = true;
+					break;
+				}
+			}
+
+			if ( family_matches ) {
+				FT_Face face = nullptr;
+				if ( FT_New_Face( lib, (const char *)file, index, &face ) == 0 ) {
+					if ( GX_Face_Is_Usable_CJK( face, require_serif ) ) {
+						out_path = (const char *)file;
+						out_index = index;
+						ok = true;
+					}
+					FT_Done_Face( face );
+				}
+			}
+		}
+		FcPatternDestroy( match );
+	}
+	FcPatternDestroy( pattern );
+	return ok;
+}
+
+//
+//	Resolve once per process and remember the answer.
+//
+// Scanning Songti.ttc means opening a 64 MB collection and walking eight faces; the font
+// library asks for the same family once per (size, weight) pair, so this must not repeat.
+static const GXSongFace & GX_Get_Song_Face( FT_Library lib )
+{
+	static GXSongFace s_face;
+	static bool s_tried = false;
+	if ( s_tried ) {
+		return s_face;
+	}
+	s_tried = true;
+
+	// 0. Explicit override. A path wins outright; anything else is treated as a family name.
+	//
+	// GeneralsX @tweak 10/08/2026 An override is not held to the serif test. Naming a font is a
+	// deliberate act, so a sans choice such as "PingFang SC" is honoured; only CJK coverage is
+	// enforced. Prefer a family name over a path: macOS keeps PingFang under an AssetsV2 path
+	// with a content hash in it, which changes across OS updates.
+	const char *override_name = getenv( "GX_CJK_SERIF_FONT" );
+	if ( override_name != nullptr && override_name[0] != '\0' ) {
+		if ( access( override_name, R_OK ) == 0 ) {
+			const int idx = GX_Best_Face_In_File( lib, override_name, nullptr, false );
+			if ( idx >= 0 ) {
+				s_face.Path = override_name;
+				s_face.FaceIndex = idx;
+				s_face.Resolved = true;
+				fprintf( stderr, "INFO: GX CJK font: override file %s (face %d)\n",
+					override_name, idx );
+				return s_face;
+			}
+			fprintf( stderr, "WARNING: GX_CJK_SERIF_FONT=%s has no face with Chinese coverage; ignoring\n",
+				override_name );
+		} else {
+			StringClass p;
+			int idx = 0;
+			if ( GX_Resolve_Family_Via_FontConfig( lib, override_name, p, idx, false ) ) {
+				s_face.Path = p;
+				s_face.FaceIndex = idx;
+				s_face.Resolved = true;
+				fprintf( stderr, "INFO: GX CJK font: override family '%s' -> %s (face %d)\n",
+					override_name, p.str(), idx );
+				return s_face;
+			}
+			fprintf( stderr, "WARNING: GX_CJK_SERIF_FONT='%s' did not resolve to a font with Chinese "
+				"coverage (check the exact family name with: fc-list :lang=zh family); ignoring\n",
+				override_name );
+		}
+	}
+
+	struct FileCandidate { const char *path; const char *family; };
+
+	// 1. A font in the runtime's own fonts directory. run.sh sets cwd to the runtime directory.
+	//
+	// Two kinds of entry live here. The Song filenames are what a user drops in by hand, and their
+	// case variants are listed because Linux is case-sensitive while a font copied off Windows may
+	// keep either spelling; on a case-insensitive volume they collapse to one file, so results are
+	// deduplicated by real path to avoid probing the same file twice.
+	//
+	// GeneralsX @feature 10/08/2026 The Noto entry is different: it is what deploy-macos-zh.sh
+	// fetches, so a fresh install has a known Song face without depending on what the host happens
+	// to own. That is the whole point of shipping it -- the search below this can find nothing on a
+	// machine with no Song font installed, and Chinese text then falls back to a sans face or to
+	// hollow boxes. Listing it here, at the same priority as a hand-dropped font and above anything
+	// on the system, makes the deployed result identical everywhere. A user who prefers the host's
+	// own Songti SC still wins by naming it in gx-font.conf, which is checked before all of this.
+	//
+	// The family hint is per-entry because it only scores candidate faces; it filters nothing, so a
+	// wrong hint would silently cost the correct face its ranking inside a multi-face file.
+	static const FileCandidate kUserPaths[] = {
+		{ "fonts/NotoSerifSC-Regular.otf",	"Noto Serif SC" },
+		{ "fonts/song.otf",					"Noto Serif SC" },
+		{ "fonts/simsun.ttc",				"SimSun" },
+		{ "fonts/simsun.ttf",				"SimSun" },
+		{ "fonts/SimSun.ttc",				"SimSun" },
+		{ "fonts/songti.ttc",				"Songti SC" },
+		{ "fonts/Songti.ttc",				"Songti SC" },
+	};
+	StringClass seen_paths[sizeof(kUserPaths) / sizeof(kUserPaths[0])];
+	int seen_count = 0;
+	for ( size_t i = 0; i < sizeof(kUserPaths) / sizeof(kUserPaths[0]); ++i ) {
+		if ( access( kUserPaths[i].path, R_OK ) != 0 ) {
+			continue;
+		}
+
+		char real_buf[PATH_MAX];
+		const char *canonical = realpath( kUserPaths[i].path, real_buf );
+		if ( canonical != nullptr ) {
+			bool already_seen = false;
+			for ( int s = 0; s < seen_count; ++s ) {
+				if ( strcmp( seen_paths[s].str(), canonical ) == 0 ) {
+					already_seen = true;
+					break;
+				}
+			}
+			if ( already_seen ) {
+				continue;
+			}
+			seen_paths[seen_count++] = canonical;
+		}
+		const int idx = GX_Best_Face_In_File( lib, kUserPaths[i].path, kUserPaths[i].family, true );
+		if ( idx >= 0 ) {
+			s_face.Path = kUserPaths[i].path;
+			s_face.FaceIndex = idx;
+			s_face.Resolved = true;
+			fprintf( stderr, "INFO: GX CJK serif font: runtime fonts/ %s (face %d)\n",
+				kUserPaths[i].path, idx );
+			return s_face;
+		}
+		// Present but unusable: almost always a sans face wearing a Song filename.
+		fprintf( stderr, "WARNING: GX CJK serif font: %s has no usable serif CJK face "
+			"(sans-serif PANOSE or missing ideographs); falling back to a system font\n",
+			kUserPaths[i].path );
+	}
+
+	// 2. The host's own Song face, by file, before asking fontconfig anything.
+	static const FileCandidate kSystemFiles[] = {
+		// macOS
+		{ "/System/Library/Fonts/Supplemental/Songti.ttc",	"Songti SC" },
+		{ "/Library/Fonts/Songti.ttc",						"Songti SC" },
+		{ "/System/Library/Fonts/Songti.ttc",				"Songti SC" },
+		// Windows (Wine prefixes and case-preserving mounts included)
+		{ "C:/Windows/Fonts/simsun.ttc",					"SimSun" },
+		{ "C:/Windows/Fonts/SimSun.ttc",					"SimSun" },
+		{ "/mnt/c/Windows/Fonts/simsun.ttc",				"SimSun" },
+	};
+	for ( size_t i = 0; i < sizeof(kSystemFiles) / sizeof(kSystemFiles[0]); ++i ) {
+		if ( access( kSystemFiles[i].path, R_OK ) != 0 ) {
+			continue;
+		}
+		const int idx = GX_Best_Face_In_File( lib, kSystemFiles[i].path, kSystemFiles[i].family, true );
+		if ( idx >= 0 ) {
+			s_face.Path = kSystemFiles[i].path;
+			s_face.FaceIndex = idx;
+			s_face.Resolved = true;
+			fprintf( stderr, "INFO: GX CJK serif font: system %s (face %d, %s)\n",
+				kSystemFiles[i].path, idx, kSystemFiles[i].family );
+			return s_face;
+		}
+	}
+
+	// 3. Open-licensed Song families, whatever the host happens to have installed.
+	static const char *kFamilies[] = {
+		"Songti SC",
+		"SimSun",
+		"STSong",
+		"Source Han Serif SC",
+		"Source Han Serif CN",
+		"Noto Serif CJK SC",
+		"Noto Serif SC",
+		"AR PL UMing CN",
+		"AR PL SungtiL GB",
+	};
+	for ( size_t i = 0; i < sizeof(kFamilies) / sizeof(kFamilies[0]); ++i ) {
+		StringClass p;
+		int idx = 0;
+		if ( GX_Resolve_Family_Via_FontConfig( lib, kFamilies[i], p, idx, true ) ) {
+			s_face.Path = p;
+			s_face.FaceIndex = idx;
+			s_face.Resolved = true;
+			fprintf( stderr, "INFO: GX CJK serif font: family '%s' -> %s (face %d)\n",
+				kFamilies[i], p.str(), idx );
+			return s_face;
+		}
+	}
+
+	fprintf( stderr, "WARNING: GX CJK serif font: no serif CJK face found. Chinese text will use "
+		"whatever fontconfig substitutes, probably a sans face. Re-run the deploy script to fetch "
+		"Noto Serif SC into <runtime>/fonts, or drop a Song font there yourself as song.otf or "
+		"simsun.ttc, or name a family in gx-font.conf / GX_CJK_SERIF_FONT.\n" );
+	return s_face;
+}
+
+} // anonymous namespace
+
+////////////////////////////////////////////////////////////////////////////////////
+//
 //	Locate_Font_FontConfig
 //
 // TheSuperHackers @feature FreeType port 10/02/2026 Locate system font using Fontconfig
+// GeneralsX @bugfix 10/08/2026 Intercept CJK "Song" requests, and honour the matched face index.
 ////////////////////////////////////////////////////////////////////////////////////
 const char *
 FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 {
+	//
+	//	Default to the first face; only a collection match overrides this.
+	//
+	FreetypeFaceIndex = 0;
+
+	//
+	//	A Song request cannot be answered by fontconfig alone: the name arrives GBK-encoded and
+	//	fontconfig substitutes the default sans instead of reporting a miss. Resolve it here.
+	//
+	if ( GX_Is_Song_Family( font_name ) && FTLibrary != nullptr ) {
+		const GXSongFace &song = GX_Get_Song_Face( FTLibrary );
+		if ( song.Resolved ) {
+			FreetypeFontPath = song.Path;
+			FreetypeFaceIndex = song.FaceIndex;
+			return FreetypeFontPath;
+		}
+		// Unresolved: fall through and let fontconfig do whatever it can.
+	}
+
+	//
 	//
 	//	Initialize Fontconfig library
 	//
@@ -1743,6 +2183,15 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
 		if ( FcPatternGetString( font, FC_FILE, 0, &file_path ) == FcResultMatch ) {
 			FreetypeFontPath = (const char*)file_path;
 			font_path = FreetypeFontPath;
+
+			// GeneralsX @bugfix 10/08/2026 Carry the matched face index through.
+			// Fontconfig indexes each face of a collection separately, so discarding this
+			// and loading face 0 can silently pick a different weight than the one matched.
+			int face_index = 0;
+			if ( FcPatternGetInteger( font, FC_INDEX, 0, &face_index ) == FcResultMatch
+				&& face_index > 0 ) {
+				FreetypeFaceIndex = face_index;
+			}
 		}
 
 		FcPatternDestroy( font );
@@ -1802,11 +2251,22 @@ FontCharsClass::Create_Freetype_Font (const char *font_name)
 	//
 	//	Load the font face
 	//
-	error = FT_New_Face( FTLibrary, font_path, 0, &FTFace );
+	// GeneralsX @bugfix 10/08/2026 Load the face Locate_Font_FontConfig actually matched.
+	// Was hardcoded to 0, which in a collection is not the Regular weight: macOS Songti.ttc
+	// face 0 is "Songti SC Black" and Regular is face 6.
+	error = FT_New_Face( FTLibrary, font_path, FreetypeFaceIndex, &FTFace );
 	if ( error != 0 ) {
 		FT_Done_FreeType( FTLibrary );
 		FTLibrary = nullptr;
 		return false;
+	}
+
+	// Some collections expose a legacy charmap first. Select Unicode explicitly
+	// so FT_Get_Char_Index receives the UTF-16 codepoints loaded from the CSF.
+	error = FT_Select_Charmap( FTFace, FT_ENCODING_UNICODE );
+	if ( error != 0 ) {
+		fprintf(stderr, "WARNING: FreeType has no Unicode charmap for font=%s error=%d\n",
+			font_name, static_cast<int>(error));
 	}
 
 	//
@@ -1827,6 +2287,19 @@ FontCharsClass::Create_Freetype_Font (const char *font_name)
 	if ( FT_IS_SCALABLE( FTFace ) ) {
 		CharAscent = FT_MulFix( FTFace->ascender, FTFace->size->metrics.y_scale ) >> 6;
 		int descent = -FT_MulFix( FTFace->descender, FTFace->size->metrics.y_scale ) >> 6;
+
+		//
+		//	GeneralsX @bugfix: hhea ascender/descender are tuned for Latin glyphs and
+		//	are too short for CJK ideographs, which commonly extend close to the full
+		//	em box. Widen the cell to the font's declared bbox (when larger) so the
+		//	bottom rows of tall glyphs aren't pushed past CharHeight and dropped --
+		//	that clipping is what made CJK text look like different characters.
+		//
+		int bbox_ascent  = FT_MulFix( FTFace->bbox.yMax, FTFace->size->metrics.y_scale ) >> 6;
+		int bbox_descent = -FT_MulFix( FTFace->bbox.yMin, FTFace->size->metrics.y_scale ) >> 6;
+		if ( bbox_ascent > CharAscent ) CharAscent = bbox_ascent;
+		if ( bbox_descent > descent ) descent = bbox_descent;
+
 		CharHeight = CharAscent + descent;
 		CharOverhang = 0;
 	} else {
@@ -1838,19 +2311,6 @@ FontCharsClass::Create_Freetype_Font (const char *font_name)
 		FTFace = nullptr;
 		FTLibrary = nullptr;
 		return false;
-	}
-
-	// GeneralsX @bugfix fbraz 03/06/2026 Log FreeType font details for Cyrillic font issue
-	{
-		char log_buffer[512];
-		sprintf(log_buffer,
-			"[GX-ISSUE144] Freetype path=%s name=%s family=%s num_glyphs=%ld has_Cyrillic_Caps=%s",
-			font_path,
-			font_name,
-			FTFace->family_name ? FTFace->family_name : "<null>",
-			FTFace->num_glyphs,
-			FT_Get_Char_Index(FTFace, 0x0410) != 0 ? "YES" : "NO");
-		fprintf(stderr, "%s\n", log_buffer);
 	}
 
 	if ( doingGenerals ) {
@@ -1881,17 +2341,6 @@ FontCharsClass::Store_Freetype_Char (WCHAR ch)
 	//	Get the glyph index for the character
 	//
 	FT_UInt glyph_index = FT_Get_Char_Index( FTFace, ch );
-
-	// GeneralsX @bugfix fbraz 03/06/2026 Log ALL Cyrillic character rendering attempts
-	if (ch >= 0x0400 && ch <= 0x04FF) {
-		char log_buffer[512];
-		sprintf(log_buffer,
-			"[GX-ISSUE144] Store_Freetype_Char U+%04X glyph_idx=%u font=%s",
-			(unsigned int)ch,
-			(unsigned int)glyph_index,
-			GDIFontName.str());
-		fprintf(stderr, "%s\n", log_buffer);
-	}
 
 	//
 	//	Load the glyph (without rendering yet)

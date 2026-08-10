@@ -241,6 +241,7 @@ public:
 		MSG_META_DECREASE_MAX_RENDER_FPS,						///< TheSuperHackers @feature Decrease the max render fps
 		MSG_META_INCREASE_LOGIC_TIME_SCALE,					///< TheSuperHackers @feature Increase the logic time scale
 		MSG_META_DECREASE_LOGIC_TIME_SCALE,					///< TheSuperHackers @feature Decrease the logic time scale
+		MSG_META_TOGGLE_EXTRAS_MENU,								///< GeneralsX @feature 26/07/2026 Toggle the cadence/extras panel
 		MSG_META_TOGGLE_LOWER_DETAILS,							///< toggles graphics options to crappy mode instantly
 		MSG_META_TOGGLE_CONTROL_BAR,								///< show/hide controlbar
 		MSG_META_TOGGLE_PLAYER_OBSERVER,						///< TheSuperHackers @feature Toggle the player observer view in game

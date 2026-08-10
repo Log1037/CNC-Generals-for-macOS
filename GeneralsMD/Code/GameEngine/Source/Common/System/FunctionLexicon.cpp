@@ -328,6 +328,7 @@ static FunctionLexicon::TableEntry winLayoutUpdateTable[] =
 	{ NAMEKEY_INVALID, "ScoreScreenUpdate",               (void*)ScoreScreenUpdate },
 	{ NAMEKEY_INVALID, "DownloadMenuUpdate",              (void*)DownloadMenuUpdate },
 	{ NAMEKEY_INVALID, "ExtrasMenuUpdate",                (void*)ExtrasMenuUpdate },
+	{ NAMEKEY_INVALID, "QuitMenuUpdate",                  (void*)QuitMenuUpdate },
 	{ NAMEKEY_INVALID, "PopupReplayUpdate",               (void*)PopupReplayUpdate },
 	{ NAMEKEY_INVALID, nullptr,                           nullptr }
 

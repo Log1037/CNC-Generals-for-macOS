@@ -76,7 +76,13 @@ typedef struct
 typedef struct
 {
 	Int			numFrames;						///< Number of frames to rotate.
-	Int			curFrame;							///< Current frame.
+	// GeneralsX @bugfix 26/07/2026 Now a fractional count of LOGIC frames, not render frames.
+	// numFrames is derived from the script's duration in milliseconds divided by the 30 Hz logic
+	// frame length, but this counter was incremented once per rendered frame. At a 60 fps render
+	// rate every scripted camera move therefore finished in half its authored time, and the faster
+	// the machine the faster the cinematic. It now advances by the logic time that each rendered
+	// frame represents, which is fractional and frame-rate independent.
+	Real		curFrame;							///< Current frame, in fractional logic frames.
 	Int			startTimeMultiplier;
 	Int			endTimeMultiplier;
 	Int			numHoldFrames;				///< Number of frames to hold the camera before finishing the movement
@@ -101,7 +107,8 @@ typedef struct
 typedef struct
 {
 	Int			numFrames;						///< Number of frames to pitch.
-	Int			curFrame;							///< Current frame.
+	// GeneralsX @bugfix 26/07/2026 Fractional logic frames, see TRotateCameraInfo::curFrame.
+	Real		curFrame;							///< Current frame, in fractional logic frames.
 	Real		angle;
 	Real		startPitch;
 	Real		endPitch;
@@ -115,7 +122,8 @@ typedef struct
 typedef struct
 {
 	Int			numFrames;						///< Number of frames to zoom.
-	Int			curFrame;							///< Current frame.
+	// GeneralsX @bugfix 26/07/2026 Fractional logic frames, see TRotateCameraInfo::curFrame.
+	Real		curFrame;							///< Current frame, in fractional logic frames.
 	Real		startZoom;
 	Real		endZoom;
 	Int			startTimeMultiplier;

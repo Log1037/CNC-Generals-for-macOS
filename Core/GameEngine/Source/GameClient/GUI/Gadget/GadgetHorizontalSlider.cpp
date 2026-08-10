@@ -64,6 +64,43 @@
 
 // PRIVATE FUNCTIONS //////////////////////////////////////////////////////////
 
+// GeneralsX @feature 26/07/2026 Take the thumb's geometry from the thumb itself rather than from the
+// fixed HORIZONTAL_SLIDER_THUMB_WIDTH / HORIZONTAL_SLIDER_THUMB_POSITION constants.
+//
+// Those constants are authored in the engine's 800x600 reference space and are never scaled by the
+// display size, unlike every other piece of gadget geometry. On a 4K display a slider ends up with a
+// 13x16 pixel thumb sitting on a track over a thousand pixels wide: it is there, it works, and it is
+// far too small to see or to aim at. There is no way for a caller to fix that from the outside,
+// because resizing the thumb used to leave the hit testing, the tick spacing and the vertical
+// position all still computed from the constants.
+//
+// Reading the live values makes a resized thumb behave correctly and is a no-op for every existing
+// slider: a thumb left at its created size reports exactly the constants back.
+
+//-------------------------------------------------------------------------------------------------
+static Int thumbWidthOf( GameWindow *thumb )
+{
+	if( thumb == nullptr )
+		return HORIZONTAL_SLIDER_THUMB_WIDTH;
+
+	ICoord2D size;
+	thumb->winGetSize( &size.x, &size.y );
+	return (size.x > 0) ? size.x : HORIZONTAL_SLIDER_THUMB_WIDTH;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** The thumb's current vertical offset inside the track, so moving it horizontally leaves it there. */
+//-------------------------------------------------------------------------------------------------
+static Int thumbYOf( GameWindow *thumb )
+{
+	if( thumb == nullptr )
+		return HORIZONTAL_SLIDER_THUMB_POSITION;
+
+	ICoord2D pos;
+	thumb->winGetPosition( &pos.x, &pos.y );
+	return pos.y;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // PUBLIC FUNCTIONS ///////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -190,7 +227,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput( GameWindow *window, UnsignedIn
 			if( clickPos < childSize.x / 2 )
 				clickPos = childSize.x / 2;
 
-			child->winSetPosition( clickPos - childSize.x / 2, HORIZONTAL_SLIDER_THUMB_POSITION);
+			child->winSetPosition( clickPos - childSize.x / 2, thumbYOf( child ) );
 			TheWindowManager->winSendSystemMsg( window, GGM_LEFT_DRAG, 0, mData1 );
 			break;
 
@@ -219,7 +256,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput( GameWindow *window, UnsignedIn
 																									s->position );
 
 							// Translate to window coords
-							child->winSetPosition( (Int)((s->position - s->minVal) * s->numTicks), HORIZONTAL_SLIDER_THUMB_POSITION );
+							child->winSetPosition( (Int)((s->position - s->minVal) * s->numTicks), thumbYOf( child ) );
 
 						}
 
@@ -244,7 +281,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput( GameWindow *window, UnsignedIn
 																									s->position );
 
 							// Translate to window coords
-							child->winSetPosition( (Int)((s->position - s->minVal) * s->numTicks),HORIZONTAL_SLIDER_THUMB_POSITION );
+							child->winSetPosition( (Int)((s->position - s->minVal) * s->numTicks), thumbYOf( child ) );
 
 						}
 
@@ -316,11 +353,14 @@ WindowMsgHandledType GadgetHorizontalSliderSystem( GameWindow *window, UnsignedI
 			childCenter.x += childSize.x / 2;
 			childCenter.y += childSize.y / 2;
 
+			const Int thumbWidth = thumbWidthOf( child );
+			const Int thumbY = thumbYOf( child );
+
 			//
 			// ignore drag attempts when the mouse is right or left of slider totally
 			// and put the dragging thumb back at the slider pos
 			//
-			if( mousex > x + size.x -HORIZONTAL_SLIDER_THUMB_WIDTH/2 )
+			if( mousex > x + size.x - thumbWidth/2 )
 			{
 
 				TheWindowManager->winSendSystemMsg( window, GSM_SET_SLIDER,
@@ -333,7 +373,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem( GameWindow *window, UnsignedI
 				break;
 
 			}
-			else if( mousex < x + HORIZONTAL_SLIDER_THUMB_WIDTH/2)
+			else if( mousex < x + thumbWidth/2)
 			{
 
 				TheWindowManager->winSendSystemMsg( window, GSM_SET_SLIDER,
@@ -349,33 +389,35 @@ WindowMsgHandledType GadgetHorizontalSliderSystem( GameWindow *window, UnsignedI
 
 			if( childCenter.x < x + childSize.x / 2 )
 			{
-				child->winSetPosition( 0,HORIZONTAL_SLIDER_THUMB_POSITION );
+				child->winSetPosition( 0, thumbY );
 				s->position = s->minVal;
 
 			}
 			else if( childCenter.x >= x + size.x - childSize.x / 2 )
 			{
-				child->winSetPosition( (Int)((s->maxVal - s->minVal) * s->numTicks) -HORIZONTAL_SLIDER_THUMB_WIDTH/2 , HORIZONTAL_SLIDER_THUMB_POSITION );
+				// GeneralsX @bugfix 26/07/2026 Land the thumb flush with the right end of the track.
+				// This used to back off by half a thumb width, which put the thumb in a visibly
+				// different place at maxVal than GSM_SET_SLIDER does for the same value. At the stock
+				// 13 pixel thumb that disagreement is 6 pixels and easy to miss; at a scaled thumb it
+				// is a wide gap that makes the slider look like it never quite reaches its maximum.
+				child->winSetPosition( (Int)((s->maxVal - s->minVal) * s->numTicks), thumbY );
 				s->position = s->maxVal;
 
 			}
 			else
 			{
-				delta = childCenter.x - x -HORIZONTAL_SLIDER_THUMB_WIDTH/2;
+				// The thumb's left edge inside the track, which is what numTicks is scaled against.
+				delta = childCenter.x - x - thumbWidth/2;
 
 				// Calc slider position
 				s->position = (Int)((delta) / s->numTicks)+ s->minVal ;
-
-				/*
-				s->position += s->minVal;
-				*/
 
 				if( s->position > s->maxVal )
 					s->position = s->maxVal;
 				if( s->position < s->minVal)
 					s->position = s->minVal;
 
-				child->winSetPosition( childRelativePos.x, HORIZONTAL_SLIDER_THUMB_POSITION );
+				child->winSetPosition( childRelativePos.x, thumbY );
 			}
 
 			// tell owner i moved
@@ -403,7 +445,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem( GameWindow *window, UnsignedI
 			newPos = (Int)((newPos - s->minVal) * s->numTicks);
 			newPos = clamp(0, newPos, (Int)((s->maxVal - s->minVal) * s->numTicks));
 
-			child->winSetPosition( newPos , HORIZONTAL_SLIDER_THUMB_POSITION );
+			child->winSetPosition( newPos , thumbYOf( child ) );
 			break;
 
 		}
@@ -418,10 +460,10 @@ WindowMsgHandledType GadgetHorizontalSliderSystem( GameWindow *window, UnsignedI
 
 			s->minVal = (Int)mData1;
 			s->maxVal = (Int)mData2;
-			s->numTicks = (Real)(size.x - HORIZONTAL_SLIDER_THUMB_WIDTH)/(Real)(s->maxVal - s->minVal);
+			s->numTicks = (Real)(size.x - thumbWidthOf( child ))/(Real)(s->maxVal - s->minVal);
 			s->position = s->minVal;
 
-			child->winSetPosition( 0, HORIZONTAL_SLIDER_THUMB_POSITION );
+			child->winSetPosition( 0, thumbYOf( child ) );
 			break;
 
 		}
@@ -460,12 +502,22 @@ WindowMsgHandledType GadgetHorizontalSliderSystem( GameWindow *window, UnsignedI
 		// ------------------------------------------------------------------------
 		case GGM_RESIZED:
 		{
-//			Int width = (Int)mData1;
+			Int width = (Int)mData1;
 			Int height = (Int)mData2;
 			GameWindow *thumb = window->winGetChild();
 
 			if( thumb )
-				thumb->winSetSize( GADGET_SIZE, height );
+			{
+				// GeneralsX @bugfix 26/07/2026 Keep the thumb's own width across a resize and bring the
+				// tick spacing with it. This used to force the width back to GADGET_SIZE and leave
+				// numTicks scaled against the old track, so a resized slider reported the wrong value
+				// for a given thumb position.
+				const Int keepWidth = thumbWidthOf( thumb );
+				thumb->winSetSize( keepWidth, height );
+
+				if( s && s->maxVal != s->minVal )
+					s->numTicks = (Real)(width - keepWidth)/(Real)(s->maxVal - s->minVal);
+			}
 
 			break;
 

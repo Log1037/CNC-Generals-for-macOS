@@ -65,7 +65,16 @@ const char *const Mouse::CursorCaptureBlockReasonNames[] = {
 	"CursorCaptureBlockReason_Paused",
 	"CursorCaptureBlockReason_Unfocused",
 	"CursorCaptureBlockReason_CursorIsOutside",
+	"CursorCaptureBlockReason_UserReleased",
 };
+
+// GeneralsX @bugfix 02/08/2026 How far the cursor may wander and still count as held still,
+// squared, in the game's internal resolution. GameWindow.h carries the 2003 value of 4 (a 2 pixel
+// radius) for the equivalent test, which was written for a 400 dpi ball mouse at 800x600 and is
+// too tight to reach on a modern sensor. 16 is a 4 pixel radius; note that internal pixels are
+// larger than physical ones whenever the window is bigger than the internal resolution, so the
+// slack in hand movement is larger still.
+static const Int TOOLTIP_STILL_TOL_SQ = 16;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // PRIVATE DATA ///////////////////////////////////////////////////////////////////////////////////
@@ -513,6 +522,8 @@ Mouse::Mouse()
 	m_highlightPos = 0;
 	m_highlightUpdateStart = 0;
 	m_stillTime = 0;
+	m_stillPos.x = 0;
+	m_stillPos.y = 0;
 	m_tooltipTextColor.red = 255;
 	m_tooltipTextColor.green = 255;
 	m_tooltipTextColor.blue = 255;
@@ -712,8 +723,27 @@ void Mouse::createStreamMessages()
 	for (Int i = 0; i < m_eventsThisFrame; ++i)
 	{
 		processMouseEvent(i);
-		if (m_currMouse.deltaPos.x || m_currMouse.deltaPos.y)
+
+		// GeneralsX @bugfix 02/08/2026 Only a real move restarts the tooltip wait.
+		//
+		// This used to restart the wait on any nonzero delta, so a single pixel of movement was
+		// enough. The 2003 code it replaced compared the move against CURSOR_MOVE_TOL_SQ and treated
+		// anything smaller as "still" -- that comparison is still sitting commented out in
+		// processMouseEvent. On a high-DPI sensor at a high polling rate the cursor never holds a
+		// single pixel while a hand rests on it, so the wait restarted faster than the delay could
+		// ever expire and the tooltip only appeared if you happened to stop dead. This is the
+		// insensitivity, and it is why the retail build feels the same way on modern hardware.
+		//
+		// The comparison is against an anchor, not against the previous frame. Per-frame deltas
+		// under the tolerance would also let a slow drag creep any distance at all without ever
+		// restarting the wait; measuring from where the cursor came to rest bounds the total.
+		const Int stillDX = m_currMouse.pos.x - m_stillPos.x;
+		const Int stillDY = m_currMouse.pos.y - m_stillPos.y;
+		if ((stillDX * stillDX) + (stillDY * stillDY) > TOOLTIP_STILL_TOL_SQ)
+		{
 			m_stillTime = now;
+			m_stillPos = m_currMouse.pos;
+		}
 
 		// button messages
 		msg = nullptr;
@@ -1001,6 +1031,35 @@ Bool Mouse::isCursorCaptured()
 }
 
 // ------------------------------------------------------------------------------------------------
+// GeneralsX @feature 27/07/2026 Hand the cursor back to the desktop on request.
+//
+// Fullscreen had no way out that kept the window in front. The cursor is grabbed to the window, and
+// the only thing that released it was losing focus, because SDL never posts MOUSE_LEAVE for a
+// fullscreen window -- there is nowhere to leave to. So reaching a second display, or anything
+// outside the game, meant switching away from the game first.
+//
+// This is a plain toggle over the existing block-reason machinery rather than a direct
+// releaseCapture(): a bare release would be undone by the next refreshCursorCapture(), and those fire
+// on focus changes and mode changes. Recording it as a reason is what makes the choice stick.
+Bool Mouse::toggleUserCursorRelease()
+{
+	if (isCursorReleasedByUser())
+	{
+		unblockCapture(CursorCaptureBlockReason_UserReleased);
+		return FALSE;
+	}
+
+	blockCapture(CursorCaptureBlockReason_UserReleased);
+	return TRUE;
+}
+
+// ------------------------------------------------------------------------------------------------
+Bool Mouse::isCursorReleasedByUser() const
+{
+	return (m_captureBlockReasonBits & (1 << CursorCaptureBlockReason_UserReleased)) != 0;
+}
+
+// ------------------------------------------------------------------------------------------------
 void Mouse::loseFocus()
 {
 	// Free the cursor when losing window focus.
@@ -1133,6 +1192,11 @@ void Mouse::draw()
 void Mouse::resetTooltipDelay()
 {
 	m_stillTime = timeGetTime();
+	// GeneralsX @bugfix 02/08/2026 Re-anchor with the time. The wait is measured from m_stillPos, so
+	// leaving a stale anchor here would let the very next frame decide the cursor had "moved" and
+	// restart the wait a second time, one frame later -- costing a frame every time the hovered
+	// object changes.
+	m_stillPos = m_currMouse.pos;
 	m_displayTooltip = FALSE;
 }
 

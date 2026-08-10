@@ -132,30 +132,20 @@ static_assert(LOGICFRAMES_PER_SECOND <= 30, "Min FPS values need to be revisited
 
 UnsignedInt RenderFpsPreset::getNextFpsValue(UnsignedInt value)
 {
-	const Int first = 0;
-	const Int last = ARRAY_SIZE(s_fpsValues) - 1;
-	for (Int i = first; i < last; ++i)
-	{
-		if (value >= s_fpsValues[i] && value < s_fpsValues[i + 1])
-		{
-			return s_fpsValues[i + 1];
-		}
-	}
-	return s_fpsValues[last];
+	if (value >= 240)
+		return UncappedFpsValue;
+	if (value < 30)
+		return 30;
+	return min<UnsignedInt>(240, ((value / 5) + 1) * 5);
 }
 
 UnsignedInt RenderFpsPreset::getPrevFpsValue(UnsignedInt value)
 {
-	const Int first = 0;
-	const Int last = ARRAY_SIZE(s_fpsValues) - 1;
-	for (Int i = last; i > first; --i)
-	{
-		if (value <= s_fpsValues[i] && value > s_fpsValues[i - 1])
-		{
-			return s_fpsValues[i - 1];
-		}
-	}
-	return s_fpsValues[first];
+	if (value == UncappedFpsValue || value > 240)
+		return 240;
+	if (value <= 30)
+		return 30;
+	return max<UnsignedInt>(30, ((value - 1) / 5) * 5);
 }
 
 UnsignedInt RenderFpsPreset::changeFpsValue(UnsignedInt value, FpsValueChange change)

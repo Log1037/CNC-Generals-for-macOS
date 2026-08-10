@@ -181,15 +181,6 @@ inline BOOL GetVersionEx(OSVERSIONINFO* lpVersionInfo) {
 
 #endif // !_WIN32
 
-// TheSuperHackers @build 10/02/2026 Bender
-// Timing functions: timeBeginPeriod(), timeEndPeriod() for Linux
-static inline DWORD timeGetTime(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, nullptr);
-    return (DWORD)((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
-}
-
 static inline DWORD timeBeginPeriod(DWORD period)
 {
     // NOOP on Linux (timer resolution is kernel controlled)

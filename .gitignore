@@ -96,3 +96,21 @@ logs_*.zip
 # iOS shell-app build products (XcodeGen regenerates the project from ios/project.yml)
 ios/build/
 ios/GeneralsXZH.xcodeproj/
+
+# GeneralsX @tweak 27/07/2026 Local-only working directories.
+#
+# These are machine state, not source: retail game assets the user supplies, downloaded SDKs,
+# scratch output, and superseded app bundles kept only for rollback. They were showing up as 3.8 GB
+# of untracked noise in `git status`, which made it easy to miss an actual new source file among
+# them. Everything here is reproducible or user supplied; nothing in it is needed to build.
+/游戏文件/
+/归档/
+/downloads/
+/var/
+/work/
+/scripts/local/
+/resources/fonts/
+/packaging/macos/GeneralsXZH.icns
+# vcpkg is cloned here by the setup scripts and pinned by vcpkg-lock.json, so the checkout itself
+# carries no information the repository does not already have.
+/external-deps/

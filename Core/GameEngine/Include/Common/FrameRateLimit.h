@@ -68,11 +68,11 @@ public:
 #else
 		MinFpsValue = LOGICFRAMES_PER_SECOND,
 #endif
-		StepFpsValue = 5,
+		// Three logic frames equal 0.1x at SAGE's 30 Hz baseline.
+		StepFpsValue = 3,
 	};
 
 	static UnsignedInt getNextFpsValue(UnsignedInt value);
 	static UnsignedInt getPrevFpsValue(UnsignedInt value);
 	static UnsignedInt changeFpsValue(UnsignedInt value, FpsValueChange change);
 };
-

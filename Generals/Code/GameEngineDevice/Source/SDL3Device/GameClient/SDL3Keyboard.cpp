@@ -256,7 +256,6 @@ KeyVal SDL3Keyboard::translateScanCodeToKeyVal(unsigned char scan)
 	switch ((SDL_Scancode)scan) {
 		case SDL_SCANCODE_ESCAPE: return KEY_ESC;      // GeneralsX @bugfix BenderAI 13/02/2026 Fix key constant name
 		case SDL_SCANCODE_RETURN: return KEY_ENTER;    // GeneralsX @bugfix BenderAI 13/02/2026 Fix key constant name
-		case SDL_SCANCODE_KP_ENTER: return KEY_KPENTER;
 		case SDL_SCANCODE_SPACE: return KEY_SPACE;
 		case SDL_SCANCODE_TAB: return KEY_TAB;
 		case SDL_SCANCODE_BACKSPACE: return KEY_BACKSPACE;
@@ -303,6 +302,28 @@ KeyVal SDL3Keyboard::translateScanCodeToKeyVal(unsigned char scan)
 		case SDL_SCANCODE_8: return KEY_8;
 		case SDL_SCANCODE_9: return KEY_9;
 		case SDL_SCANCODE_0: return KEY_0;
+
+		// Numeric keypad
+		// GeneralsX @bugfix 02/08/2026 Without these the keypad translated to KEY_NONE, so the
+		// CommandMap.ini camera bindings (KEY_KP2/4/5/6/8) never reached MetaEventTranslator.
+		case SDL_SCANCODE_KP_0: return KEY_KP0;
+		case SDL_SCANCODE_KP_1: return KEY_KP1;
+		case SDL_SCANCODE_KP_2: return KEY_KP2;
+		case SDL_SCANCODE_KP_3: return KEY_KP3;
+		case SDL_SCANCODE_KP_4: return KEY_KP4;
+		case SDL_SCANCODE_KP_5: return KEY_KP5;
+		case SDL_SCANCODE_KP_6: return KEY_KP6;
+		case SDL_SCANCODE_KP_7: return KEY_KP7;
+		case SDL_SCANCODE_KP_8: return KEY_KP8;
+		case SDL_SCANCODE_KP_9: return KEY_KP9;
+		case SDL_SCANCODE_KP_PERIOD: return KEY_KPDEL;
+		case SDL_SCANCODE_KP_MULTIPLY: return KEY_KPSTAR;
+		case SDL_SCANCODE_KP_MINUS: return KEY_KPMINUS;
+		case SDL_SCANCODE_KP_PLUS: return KEY_KPPLUS;
+		case SDL_SCANCODE_KP_DIVIDE: return KEY_KPSLASH;
+		case SDL_SCANCODE_KP_ENTER: return KEY_KPENTER;
+		// Num Lock on PC keyboards, Clear on Mac keyboards.
+		case SDL_SCANCODE_NUMLOCKCLEAR: return KEY_NUM;
 
 		// Letters (A-Z)
 		case SDL_SCANCODE_A: return KEY_A;

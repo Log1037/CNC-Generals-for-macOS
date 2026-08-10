@@ -150,6 +150,18 @@ void W3DGadgetHorizontalSliderImageDraw( GameWindow *window,
 
 	SliderData *s = (SliderData *)window->winGetUserData();
 
+	// Some legacy menu sliders select the image renderer before their image
+	// triplet has been populated.  The original renderer dereferenced the
+	// missing fill image unconditionally, which becomes visible during the
+	// first high-density frame on macOS.  Fall back to the colour renderer;
+	// it is safe for partially initialised and asset-less slider controls.
+	if (s == NULL || fillSquare == NULL || blankSquare == NULL ||
+		(highlightSquare == NULL && BitIsSet(instData->getState(), WIN_STATE_HILITED)))
+	{
+		W3DGadgetHorizontalSliderDraw(window, instData);
+		return;
+	}
+
 	Real xMulti = INT_TO_REAL(TheDisplay->getWidth()) / DEFAULT_DISPLAY_WIDTH;
 
 	// figure out how many boxes we draw for this slider
@@ -157,6 +169,11 @@ void W3DGadgetHorizontalSliderImageDraw( GameWindow *window,
 	Int numSelectedBoxes = 0;
 	Int numHighlightBoxes = 0;
 	Int boxWidth = fillSquare->getImageWidth()* xMulti;
+	if (boxWidth <= 0 || s->maxVal == s->minVal)
+	{
+		W3DGadgetHorizontalSliderDraw(window, instData);
+		return;
+	}
 	Int boxPadding = 2;
 	start.x = origin.x;
 	end.x	= start.x + boxWidth;
@@ -476,4 +493,3 @@ void W3DGadgetHorizontalSliderImageDrawA( GameWindow *window,
 
 	TheDisplay->enableClipping(FALSE);
 }
-

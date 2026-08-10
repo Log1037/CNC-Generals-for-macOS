@@ -3834,8 +3834,23 @@ GameFont *ControlBar::overrideTooltipGadgetFont( GameWindow *win )
 	if( TheGlobalLanguageData && TheGlobalLanguageData->m_unicodeFontName.isNotEmpty() )
 		fontName = TheGlobalLanguageData->m_unicodeFontName;
 
-	// Get the font from the font library (12pt, not bold)
-	GameFont *newFont = TheFontLibrary->getFont( fontName, 12, FALSE );
+	// GeneralsX @bugfix 02/08/2026 Scale the size for the resolution instead of pinning it.
+	//
+	// This size used to be a flat 12, which made the build description the one piece of text in the
+	// game that ignored the resolution. Every other font is sized through GlobalLanguage; these three
+	// gadgets normally get theirs from HEADERTEMPLATE = "LabelSmall" in ControlBarPopupDescription.wnd,
+	// which HeaderTemplateManager::populateGameFonts runs through adjustFontSize. Replacing the font to
+	// get Unicode coverage also replaced that scaling, so above roughly 1000 px wide the override was
+	// smaller than the template it displaced -- at 2048 it was 12 where LabelSmall gave 20. The box
+	// itself is laid out from the .wnd in 800x600 units and scaled by the real resolution, so the text
+	// was shrinking away from its own container as the resolution rose.
+	//
+	// The base stays 12 rather than reading LabelSmall so the Unicode fix keeps its floor at 800x600,
+	// where 12 was chosen to stop the clipping in Issue #153.
+	const Int pointSize = TheGlobalLanguageData
+		? TheGlobalLanguageData->adjustFontSize( 12 )
+		: 12;
+	GameFont *newFont = TheFontLibrary->getFont( fontName, pointSize, FALSE );
 	if( !newFont )
 		return nullptr;
 

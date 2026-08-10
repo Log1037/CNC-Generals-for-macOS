@@ -1033,11 +1033,32 @@ static Bool parseText( const char *token, WinInstanceData *instData,
 	char *c;
 	const char *stringSeps = "\n\r\t\"";
 
-	// scan to the first " mark
-	while( *ptr != '"' )
+	// GeneralsX @bugfix 27/07/2026 An empty TEXT field is valid data and used to be fatal.
+	//
+	// Opening the in-game quit menu segfaulted every time, in _platform_strlen under this function.
+	// QuitMenu.wnd and QuitNoSave.wnd both declare a placeholder label as TEXT = "", and
+	// readUntilSemicolon strips the semicolon and the leading space, so the buffer handed here is
+	// exactly two quote characters. Skipping the opening one leaves a string that is nothing but
+	// separators, strtok answers NULL, and the unguarded strlen below dereferenced it.
+	//
+	// The scan for the opening quote is bounded for the same reason: it walked memory until it happened
+	// to find a quote, so a field with none would run off the end of the buffer instead of failing.
+	while( *ptr && *ptr != '"' )
 		ptr++;
+	if( *ptr != '"' )
+	{
+		DEBUG_LOG(( "parseText: no opening quote in '%s'", buffer ));
+		return FALSE;
+	}
 	ptr++;  // skip the "
 	c = strtok( ptr, stringSeps );  // value
+	if( c == nullptr )
+	{
+		// TEXT = "" -- an intentionally blank label. Clear it and carry on; the window is real and the
+		// rest of its fields still have to be parsed.
+		instData->m_textLabelString.clear();
+		return TRUE;
+	}
 	if( strlen( c ) >= MAX_TEXT_LABEL )
 	{
 

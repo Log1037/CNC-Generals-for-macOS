@@ -39,9 +39,14 @@
 #include "StdDevice/Common/StdBIGFileSystem.h"
 #include "Utility/endian_compat.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+
+#if !defined(_WIN32)
+#include <dirent.h>
+#endif
 
 #if defined(_UNIX)
 #include <strings.h>
@@ -651,7 +656,74 @@ void StdBIGFileSystem::closeAllFiles() {
 Bool StdBIGFileSystem::loadBigFilesFromDirectory(AsciiString dir, AsciiString fileMask, Bool overwrite) {
 
 	FilenameList filenameList;
-	TheLocalFileSystem->getFileListInDirectory(dir, "", fileMask, filenameList, TRUE);
+	fprintf(stderr, "[BIG_LOAD] scanning directory='%s' mask='%s'\n", dir.str(), fileMask.str());
+	AsciiString manifestPath = dir;
+	if (manifestPath.isNotEmpty() && !manifestPath.endsWith("/") && !manifestPath.endsWith("\\")) {
+		manifestPath.concat('/');
+	}
+	manifestPath.concat("GeneralsX.biglist");
+
+	FILE* manifest = fopen(manifestPath.str(), "r");
+	if (manifest != nullptr) {
+		char line[4096] = { 0 };
+		while (fgets(line, sizeof(line), manifest) != nullptr) {
+			trimRight(line);
+			const char* filenameText = trimLeft(line);
+			if (*filenameText == '\0' || *filenameText == '#' || *filenameText == ';') {
+				continue;
+			}
+
+			AsciiString fullPath = dir;
+			if (fullPath.isNotEmpty() && !fullPath.endsWith("/") && !fullPath.endsWith("\\")) {
+				fullPath.concat('/');
+			}
+			fullPath.concat(filenameText);
+			filenameList.insert(fullPath);
+		}
+		fclose(manifest);
+		fprintf(stderr, "[BIG_LOAD] using manifest='%s'\n", manifestPath.str());
+	}
+
+	// Generals and Zero Hour keep their loadable BIG archives in the install
+	// root.  Recursing into Data, fonts and runtime-library directories is both
+	// unnecessary (the one historical Data/INI/INIZH.big copy must be skipped)
+	// and can block for minutes on removable APFS volumes while macOS resolves
+	// metadata.  On Unix use the POSIX directory API here as std::filesystem's
+	// iterator can block indefinitely on some removable APFS volumes.
+#if !defined(_WIN32)
+	if (filenameList.empty()) {
+		const char* directoryPath = dir.isEmpty() ? "." : dir.str();
+		DIR* directory = opendir(directoryPath);
+		if (directory == nullptr) {
+			fprintf(stderr, "[BIG_LOAD] unable to open '%s': %s\n", directoryPath, strerror(errno));
+			return FALSE;
+		}
+
+		while (dirent* entry = readdir(directory)) {
+			if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+				continue;
+			}
+
+			AsciiString filename(entry->d_name);
+			if (!filename.endsWithNoCase(".big")) {
+				continue;
+			}
+
+			AsciiString fullPath = dir;
+			if (fullPath.isNotEmpty() && !fullPath.endsWith("/") && !fullPath.endsWith("\\")) {
+				fullPath.concat('/');
+			}
+			fullPath.concat(filename);
+			filenameList.insert(fullPath);
+		}
+		closedir(directory);
+	}
+#else
+	if (filenameList.empty()) {
+		TheLocalFileSystem->getFileListInDirectory(dir, "", fileMask, filenameList, FALSE);
+	}
+#endif
+	fprintf(stderr, "[BIG_LOAD] found %zu archive(s) in '%s'\n", filenameList.size(), dir.str());
 
 	Bool actuallyAdded = FALSE;
 	FilenameListIter it = filenameList.begin();
@@ -666,6 +738,7 @@ Bool StdBIGFileSystem::loadBigFilesFromDirectory(AsciiString dir, AsciiString fi
 		}
 #endif
 
+		fprintf(stderr, "[BIG_LOAD] opening '%s'\n", (*it).str());
 		ArchiveFile *archiveFile = openArchiveFile((*it).str());
 
 		if (archiveFile != nullptr) {
@@ -674,10 +747,15 @@ Bool StdBIGFileSystem::loadBigFilesFromDirectory(AsciiString dir, AsciiString fi
 			m_archiveFileMap[(*it)] = archiveFile;
 			DEBUG_LOG(("StdBIGFileSystem::loadBigFilesFromDirectory - %s inserted into the archive file map.", (*it).str()));
 			actuallyAdded = TRUE;
+			fprintf(stderr, "[BIG_LOAD] loaded '%s'\n", (*it).str());
+		}
+		else {
+			fprintf(stderr, "[BIG_LOAD] failed '%s'\n", (*it).str());
 		}
 
 		it++;
 	}
+	fprintf(stderr, "[BIG_LOAD] completed directory='%s' added=%d\n", dir.str(), actuallyAdded);
 
 	return actuallyAdded;
 }

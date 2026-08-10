@@ -53,6 +53,7 @@ public:
 	virtual void init(void);
 	virtual void reset(void);
 	virtual void update(void);
+	virtual void draw(void);
 	virtual void initCursorResources(void);
 
 	// Mouse interface

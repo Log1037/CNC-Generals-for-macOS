@@ -419,6 +419,36 @@ void SDL3Mouse::update(void)
 }
 
 /**
+ * Draw the cursor overlays: the tooltip box and the cursor text.
+ *
+ * GeneralsX @bugfix 02/08/2026 Nothing drew these on SDL3.
+ *
+ * The cursor itself is an SDL system cursor here, so this class had no reason to draw anything and
+ * never overrode draw(). But the tooltip box is not part of the cursor -- it is 2D geometry the base
+ * class renders through TheDisplay, and the only caller of Mouse::drawTooltip()/drawCursorText() was
+ * W3DMouse::draw(), which is the Windows-only cursor renderer. So every tooltip that goes through
+ * the cursor was computed each frame and then thrown away: the unit box on world hover, and every
+ * GameWindow tooltip in the menus and the sidebar. The control bar's build description survived
+ * because it is a real window layout drawn by the window manager, which is why the loss showed up
+ * as "tooltips are unreliable" rather than "tooltips are gone".
+ *
+ * Called from W3DDisplay::draw() inside the render block, after the UI and before present, which is
+ * where W3DMouse drew them -- so these land on top of the interface, as before.
+ *
+ * m_IsVisible is the real cursor state; the inherited m_visible is pinned TRUE on this platform so
+ * setCursor() can pick non-default cursors, and cannot be used to tell whether the cursor is hidden.
+ * Scripts hide the cursor for cinematics and the tooltip has to go with it.
+ */
+void SDL3Mouse::draw(void)
+{
+	if (!m_IsVisible)
+		return;
+
+	drawCursorText();
+	drawTooltip();
+}
+
+/**
  * Initialize cursor resources (load cursor images from ANI files)
  * GeneralsX @bugfix BenderAI 22/02/2026 Port fighter19 cursor loading
  */

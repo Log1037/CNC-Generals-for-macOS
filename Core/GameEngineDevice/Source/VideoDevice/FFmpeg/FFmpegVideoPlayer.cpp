@@ -38,6 +38,7 @@
 #include "Common/GlobalData.h"
 #include "Common/Registry.h"
 #include "Common/FileSystem.h"
+#include "time_compat.h"
 
 #include "VideoDevice/FFmpeg/FFmpegFile.h"
 
@@ -50,8 +51,6 @@ extern "C" {
 #include "OpenALAudioDevice/OpenALAudioManager.h"
 #include "OpenALAudioDevice/OpenALAudioStream.h"
 #endif
-
-#include <chrono>
 
 //----------------------------------------------------------------------------
 //         Externals
@@ -329,7 +328,7 @@ FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
 	audioStream->play();
 #endif
 
-	m_startTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+	m_startTime = GeneralsXGetRealTimeMilliseconds();
 }
 
 //============================================================================
@@ -469,7 +468,7 @@ void FFmpegVideoStream::update()
 
 Bool FFmpegVideoStream::isFrameReady()
 {
-	uint64_t time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+	const uint64_t time = GeneralsXGetRealTimeMilliseconds();
 	bool ready = (time - m_startTime) >= m_ffmpegFile->getFrameTime() * frameIndex();
 	return ready;
 
@@ -604,5 +603,4 @@ Int		FFmpegVideoStream::width()
 {
 	return m_ffmpegFile->getWidth();
 }
-
 

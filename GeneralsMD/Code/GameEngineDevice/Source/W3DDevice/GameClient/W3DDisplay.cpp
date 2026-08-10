@@ -68,6 +68,14 @@ static void drawFramerateBar();
 #include "GameClient/Line2D.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/GlobalLanguage.h"
+// GeneralsX @tweak 27/07/2026 For GeneralsX_NotifyResolutionChanged, which forwards to the header
+// template manager the way the stock options screen does after a resolution change.
+#include "GameClient/HeaderTemplate.h"
+// GeneralsX @bugfix 27/07/2026 For GeneralsX_NotifyResolutionChanged, which rebuilds the shell
+// layouts and the control bar the way the stock options screen does after a resolution change.
+#include "GameClient/Shell.h"
+#include "GameClient/InGameUI.h"
+#include "GameClient/View.h"
 #include "GameClient/Water.h"
 
 #include "GameNetwork/NetworkInterface.h"
@@ -507,6 +515,249 @@ inline Bool isResolutionSupported(const ResolutionDescClass &res)
 
 // SDL3 display size providers for DX8Wrapper pillarbox (registered at init)
 #ifdef SAGE_USE_SDL3
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+// GeneralsX @feature 26/07/2026 Single source of truth for macOS HiDPI unit conversion.
+//
+// The port previously had two providers disagreeing about units: SDL3_GetNativeDisplaySize
+// returned logical points while SDL3_GetWindowSizeInPixels returned physical pixels, and each
+// caller multiplied (or forgot to multiply) by density on its own. That split is what produced
+// both the "oversized resolution list / oversized fonts" regression and the halved mouse
+// coordinates. Everything macOS-specific about points-vs-pixels now derives from this one call.
+//
+// Convention established here and relied on by the rest of the HiDPI path:
+//   - The engine's internal render resolution (TheDisplay, .wnd layout scaling, font scaling,
+//     Render2D coordinate range, mouse output) is in PHYSICAL PIXELS.
+//   - SDL window geometry APIs (SDL_SetWindowSize, mouse event coordinates) are in POINTS.
+//   - Conversion between the two goes through outDensity, never a hardcoded 2.0f.
+bool GeneralsX_GetMacDisplayMetrics(int& outPointsW, int& outPointsH,
+                                   int& outPixelsW, int& outPixelsH, float& outDensity)
+{
+	extern SDL_Window* TheSDL3Window;
+	if (!TheSDL3Window) return false;
+
+	const SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
+	const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayId);
+	if (!mode || mode->w <= 0 || mode->h <= 0) return false;
+
+	outDensity = mode->pixel_density > 0.0f ? mode->pixel_density : 1.0f;
+
+	// Cocoa can transiently misreport window size mid-fullscreen-transition, so in fullscreen
+	// trust the display mode; windowed reads the live window instead.
+	if ((SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0)
+	{
+		outPointsW = mode->w;
+		outPointsH = mode->h;
+	}
+	else
+	{
+		int winW = 0, winH = 0;
+		SDL_GetWindowSize(TheSDL3Window, &winW, &winH);
+		if (winW <= 0 || winH <= 0) { winW = mode->w; winH = mode->h; }
+		outPointsW = winW;
+		outPointsH = winH;
+
+		// Prefer the window's real backing ratio when SDL can report it; a window can sit on a
+		// different display than the one the mode came from.
+		int physW = 0, physH = 0;
+		SDL_GetWindowSizeInPixels(TheSDL3Window, &physW, &physH);
+		if (physW > 0 && winW > 0)
+			outDensity = (float)physW / (float)winW;
+	}
+
+	outPixelsW = (int)(outPointsW * outDensity);
+	outPixelsH = (int)(outPointsH * outDensity);
+
+	{
+		static int lastLoggedW = -1, lastLoggedH = -1;
+		if (outPixelsW != lastLoggedW || outPixelsH != lastLoggedH) {
+			lastLoggedW = outPixelsW;
+			lastLoggedH = outPixelsH;
+			int wpW = 0, wpH = 0, wxW = 0, wxH = 0;
+			SDL_GetWindowSize(TheSDL3Window, &wpW, &wpH);
+			SDL_GetWindowSizeInPixels(TheSDL3Window, &wxW, &wxH);
+			fprintf(stderr, "INFO: GX-HiDPI metrics: mode=%dx%d modeDensity=%.2f "
+				"winPoints=%dx%d winPixels=%dx%d -> points=%dx%d pixels=%dx%d density=%.2f fs=%d\n",
+				mode->w, mode->h, mode->pixel_density, wpW, wpH, wxW, wxH,
+				outPointsW, outPointsH, outPixelsW, outPixelsH, outDensity,
+				(SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0 ? 1 : 0);
+		}
+	}
+	return true;
+}
+
+// GeneralsX @feature 27/07/2026 The active render scale, as a percentage of the display's physical
+// pixel size, shared between the launch path and the in-game clarity switch.
+//
+// The percentage never takes part in sizing the window -- that is the whole point of it. The window is
+// always pickedResolution/density points, at any percentage; what the percentage decides is how many
+// pixels get drawn into that window, which is windowPixels * percent / 100. An earlier version folded
+// the percentage into the density divisor instead, which at 50% asked for a window twice as wide in
+// pixels as the render target it held, so the game drew at double size with the window framing only
+// its top-left corner.
+static int s_gxRenderScalePercent = 100;
+
+void GeneralsX_SetRenderScalePercent(int percent)
+{
+	if (percent < 25) percent = 25;
+	if (percent > 100) percent = 100;
+	s_gxRenderScalePercent = percent;
+}
+
+int GeneralsX_GetRenderScalePercent(void)
+{
+	return s_gxRenderScalePercent;
+}
+
+// GeneralsX @bugfix 27/07/2026 The window's size in POINTS, as explicit state.
+//
+// This is the fix for a design error that made point-for-point mode unusable in a window. The window
+// size used to be re-derived from the render resolution while the render resolution was re-derived
+// from the window size, so the two chased each other. At 100% the arithmetic happened to round-trip
+// and it looked fine; at 50% it did not. Dividing the render pixels by the *effective* density asked
+// Cocoa for a window of renderWidth POINTS, which on a 2x display is a window twice as wide in pixels
+// as the render target it holds -- so the game drew at double size and the window showed only its
+// top-left corner. Requests past the screen edge were then clamped by macOS, the resize handler fed
+// the clamped size back in, and the pair ran away to 5140x2004.
+//
+// So the window's point size is now stored, not computed. Exactly three things set it: a resolution
+// pick, the user dragging the window, and launch. The clarity mode is deliberately not one of them --
+// it changes how many pixels are rendered into the window, never the window itself, which is what
+// makes the switch feel like a sharpness control instead of a window resizer.
+//
+// The invariant everything else derives from:
+//     windowPoints = pickedResolution / density        (clamped to what fits on screen)
+//     renderPixels = windowPoints * density * percent / 100
+// At 100% renderPixels equals the window's pixel extent, the pillarbox is a no-op, and output is
+// genuine 1:1 HiDPI. At 50% the render target is half-size in each axis and the swapchain upscales it
+// by exactly 2 -- soft, but correctly sized and filling the window, which is what a Windows game gets
+// when it opts out of DPI virtualization.
+static int s_gxWindowPointW = 0;
+static int s_gxWindowPointH = 0;
+
+// Re-entrancy guard. setDisplayMode calls the apply function below, which resizes the window, which
+// makes Cocoa post a resize event, which SDL3GameEngine::handleWindowEvent answers by calling
+// setDisplayMode again. Without this the first resolution pick recurses.
+static bool s_gxApplyingWindowMode = false;
+
+// GeneralsX @bugfix 27/07/2026 Do not re-apply a window mode macOS has already applied.
+//
+// When the user toggles fullscreen with Ctrl+Cmd+F or the zoom button, the window reaches its final
+// state before the engine hears about it, so the only thing left to do is match the render resolution.
+// But that goes through setDisplayMode, which calls SDL3_ApplyWindowModeForRenderConfig, which sets
+// the SDL fullscreen state again -- and SDL3_EnsureNativeFullscreen pumps events while doing it, so
+// the transition re-entered itself. Measured: one keypress produced four alternating transitions, and
+// leaving fullscreen fought Cocoa's frame restore down from 1802x1002 to 2048x1034 points.
+//
+// While this is set the apply function does nothing at all. The window is right; only the render
+// target is not.
+static bool s_gxFollowingNativeFullscreen = false;
+
+Bool GeneralsX_IsApplyingWindowMode(void)
+{
+	return s_gxApplyingWindowMode ? TRUE : FALSE;
+}
+
+void GeneralsX_SetWindowPointSize(int pointW, int pointH)
+{
+	if (pointW > 0 && pointH > 0) {
+		s_gxWindowPointW = pointW;
+		s_gxWindowPointH = pointH;
+	}
+}
+
+Bool GeneralsX_GetWindowPointSize(int& pointW, int& pointH)
+{
+	if (s_gxWindowPointW <= 0 || s_gxWindowPointH <= 0) return FALSE;
+	pointW = s_gxWindowPointW;
+	pointH = s_gxWindowPointH;
+	return TRUE;
+}
+
+// The render resolution the current window should be drawing at, in physical pixels.
+Bool GeneralsX_GetWindowedRenderSize(int& outW, int& outH)
+{
+	extern SDL_Window* TheSDL3Window;
+	if (!TheSDL3Window) return FALSE;
+
+	int pxW = 0, pxH = 0;
+	if (!SDL_GetWindowSizeInPixels(TheSDL3Window, &pxW, &pxH) || pxW <= 0 || pxH <= 0) return FALSE;
+
+	outW = (pxW * s_gxRenderScalePercent) / 100;
+	outH = (pxH * s_gxRenderScalePercent) / 100;
+	outW &= ~1;		// even, as every other path that sets a resolution requires
+	outH &= ~1;
+	return (outW > 0 && outH > 0) ? TRUE : FALSE;
+}
+
+// Defined in Main/MacDisplayKick.cpp, which cannot be included here: <CoreGraphics/CoreGraphics.h>
+// pulls in <MacTypes.h>, whose "typedef UInt8 Byte" is a hard conflict with the engine's own
+// "typedef char Byte" in BaseTypeCore.h. Declaring the one symbol keeps the two apart.
+extern "C" bool GXGetPanelNativePixelSize(int* outWidth, int* outHeight);
+
+// GeneralsX @bugfix 10/08/2026 In fullscreen, point-for-point targets the PANEL, not the point grid.
+//
+// The two clarity modes exist for two different reasons, and only one of them is about sharpness:
+//
+//   HIDPI  follows the system's scaled framebuffer. The point of it is UI SIZE -- the game's text and
+//          panels end up the size the rest of the desktop taught the user to expect, and rendering at
+//          the full framebuffer is what keeps that from costing any sharpness.
+//
+//   POINT  is one rendered pixel per PHYSICAL PANEL PIXEL, which is the sharpest image the display can
+//          physically show. Its known cost is that the UI gets small, because the engine scales fonts
+//          at 0.7x the resolution ratio (GlobalLanguage's ResolutionFontAdjustment) while the layout
+//          boxes scale proportionally. That tradeoff is the mode's purpose, not a defect in it.
+//
+// The clarity percentage cannot express POINT on a scaled display. On the development monitor macOS
+// reports 2048x1152 points over a 4096x2304 framebuffer for a panel that is physically 2560x1440, so
+// 50% of the framebuffer lands on 2048x1152 -- point-for-point by the letter of the old definition,
+// and a fifth of the panel's detail discarded in each axis before WindowServer even resamples the
+// frame. The panel size is not reachable as an integer percentage either: it is 62.5% of 4096x2304,
+// and both 62% and 63% miss 2560 outright. So POINT asks CoreGraphics for the panel directly.
+//
+// Deliberately NOT conditional on the display supersampling. Where the framebuffer already IS the
+// panel -- a stock Retina Mac at its default scaling -- the two modes resolve to the same number, and
+// that is the honest answer rather than a collapsed setting: on such a display, rendering at the
+// system framebuffer already is 1:1 with the panel, so there is nothing for POINT to do differently.
+// The percentage is used only as the fallback for displays where CoreGraphics flags no native mode at
+// all (some external and virtual displays), which is also the path every non-Apple platform takes.
+Bool GeneralsX_GetFullscreenRenderSize(int& outW, int& outH)
+{
+	int ptW = 0, ptH = 0, pxW = 0, pxH = 0;
+	float density = 1.0f;
+	if (!GeneralsX_GetMacDisplayMetrics(ptW, ptH, pxW, pxH, density) || pxW <= 0 || pxH <= 0) {
+		return FALSE;
+	}
+
+	int targetW = (pxW * s_gxRenderScalePercent) / 100;
+	int targetH = (pxH * s_gxRenderScalePercent) / 100;
+
+	if (s_gxRenderScalePercent < 100) {
+		int panelW = 0, panelH = 0;
+		if (GXGetPanelNativePixelSize(&panelW, &panelH) && panelW > 0 && panelH > 0) {
+			static bool logged = false;
+			if (!logged) {
+				logged = true;
+				fprintf(stderr, "INFO: GX-HiDPI point mode targets panel native %dx%d "
+					"(points %dx%d, framebuffer %dx%d, %d%% would have given %dx%d)\n",
+					panelW, panelH, ptW, ptH, pxW, pxH, s_gxRenderScalePercent, targetW, targetH);
+			}
+			targetW = panelW;
+			targetH = panelH;
+		}
+	}
+
+	targetW &= ~1;
+	targetH &= ~1;
+	if (targetW <= 0 || targetH <= 0) {
+		return FALSE;
+	}
+	outW = targetW;
+	outH = targetH;
+	return TRUE;
+}
+#endif
+
 static bool SDL3_GetNativeDisplaySize(int& outW, int& outH, float& outDensity)
 {
 	extern SDL_Window* TheSDL3Window;
@@ -514,9 +765,36 @@ static bool SDL3_GetNativeDisplaySize(int& outW, int& outH, float& outDensity)
 	SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
 	const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayId);
 	if (!mode || mode->w <= 0 || mode->h <= 0) return false;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// GeneralsX @bugfix 26/07/2026 Report PHYSICAL PIXELS here, same as every other platform.
+	//
+	// This used to return logical points to keep buildFilteredResolutions() and GlobalLanguage's
+	// font scaling from inflating. That was treating a symptom: because the engine rendered at
+	// point dimensions while DXVK's swapchain was sized in pixels, DX8Wrapper::Pillarbox_Setup
+	// upscaled the whole frame (3D, UI and text alike) by the backing scale factor -- the exact
+	// softness this port was trying to eliminate. The resolution list and font scaling are now
+	// pixel-based too, so a consistent pixel convention is what makes them correct.
+	{
+		int ptW = 0, ptH = 0, pxW = 0, pxH = 0;
+		float density = 1.0f;
+		if (GeneralsX_GetMacDisplayMetrics(ptW, ptH, pxW, pxH, density))
+		{
+			// Screen extent, not window extent: the resolution list must not shrink when the
+			// game happens to be running in a small window.
+			outDensity = density;
+			outW = (int)(mode->w * density);
+			outH = (int)(mode->h * density);
+			return true;
+		}
+	}
 	outDensity = mode->pixel_density > 0 ? mode->pixel_density : 1.0f;
 	outW = (int)(mode->w * outDensity);
 	outH = (int)(mode->h * outDensity);
+#else
+	outDensity = mode->pixel_density > 0 ? mode->pixel_density : 1.0f;
+	outW = (int)(mode->w * outDensity);
+	outH = (int)(mode->h * outDensity);
+#endif
 	return true;
 }
 
@@ -524,6 +802,22 @@ static bool SDL3_GetWindowSizeInPixels(int& outW, int& outH, float& outDensity)
 {
 	extern SDL_Window* TheSDL3Window;
 	if (!TheSDL3Window) return false;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// GeneralsX @refactor 26/07/2026 Contract: physical/backbuffer pixels, with outDensity set to
+	// the backing scale so DX8Wrapper::Pillarbox_Get_Rect can convert its fit rect back to the
+	// point space SDL3 reports mouse coordinates in.
+	{
+		int ptW = 0, ptH = 0, pxW = 0, pxH = 0;
+		float density = 1.0f;
+		if (GeneralsX_GetMacDisplayMetrics(ptW, ptH, pxW, pxH, density))
+		{
+			outW = pxW;
+			outH = pxH;
+			outDensity = density;
+			return true;
+		}
+	}
+#endif
 	int logW = 0, logH = 0, physW = 0, physH = 0;
 	SDL_GetWindowSize(TheSDL3Window, &logW, &logH);
 	SDL_GetWindowSizeInPixels(TheSDL3Window, &physW, &physH);
@@ -553,17 +847,119 @@ static void SDL3_EnsureNativeFullscreen(SDL_Window* window)
 	SDL_RaiseWindow(window);
 }
 
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+// GeneralsX @bugfix 27/07/2026 Measure the title bar; SDL will not report it.
+//
+// SDL_GetWindowBordersSize is not implemented in the Cocoa backend: it reports zero on all four sides even
+// for a window that is on screen and plainly has a bar. Everything here that has to fit a frame inside the
+// screen needs that height, because SDL sizes and positions the CONTENT area while the frame has to hold
+// the bar as well -- so a request that exactly fills the usable height overflows by the bar, and Cocoa
+// answers the overflow by shrinking the height or sliding the window upward. Measured on the reporting
+// machine after leaving fullscreen: content 1579x1066 with the frame at y = -62, so the bar was above the
+// top of the screen and there was nothing left to grab.
+//
+// Seeded high enough for current macOS and only ever raised from what Cocoa actually does. Reserving a few
+// points too many costs a few points of window; reserving too few costs the title bar.
+static int s_gxTitleBarPoints = 32;
+
+// Cocoa clamps by fitting the whole frame inside the visible screen, so a height it refused says what
+// the bar took: the content it granted plus the bar is the entire usable height.
+static void GeneralsX_LearnTitleBarFromClamp(int usableHeight, int grantedH)
+{
+	const int implied = usableHeight - grantedH;
+	if (implied > s_gxTitleBarPoints && implied <= 64) {
+		s_gxTitleBarPoints = implied;
+	}
+}
+
+// GeneralsX @bugfix 27/07/2026 Put the title bar back on screen if something moved it off.
+//
+// A window whose bar is above the top of the screen cannot be moved, resized or closed by hand, and the
+// only way out is a hotkey the player may not know. macOS will not let a drag produce this, so a
+// position this high is always something the app or Cocoa did -- a restored frame, or a programmatic
+// move -- and correcting it cannot be fighting the user.
+//
+// SDL positions the content area, so the bar sits in the points above it and the content has to start at
+// least that far into the usable area.
+void GeneralsX_EnsureWindowTitleBarOnScreen(void)
+{
+	extern SDL_Window* TheSDL3Window;
+	if (!TheSDL3Window) return;
+	if ((SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0) return;
+
+	SDL_Rect usable;
+	if (!SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(TheSDL3Window), &usable)) return;
+	if (usable.h <= 0) return;
+
+	int posX = 0, posY = 0;
+	if (!SDL_GetWindowPosition(TheSDL3Window, &posX, &posY)) return;
+
+	const int minContentY = usable.y + s_gxTitleBarPoints;
+	if (posY >= minContentY) return;
+
+	SDL_SetWindowPosition(TheSDL3Window, posX, minContentY);
+	fprintf(stderr, "INFO: window title bar was off-screen at y=%d, moved to y=%d\n", posY, minContentY);
+}
+#endif
+
 // GeneralsX @bugfix GitHub Copilot 27/04/2026 Apply SDL3 window sizing/fullscreen only after the final render resolution is known.
 static void SDL3_ApplyWindowModeForRenderConfig(Bool windowed, Int renderWidth, Int renderHeight)
 {
 	extern SDL_Window* TheSDL3Window;
 	if (!TheSDL3Window) return;
 
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// macOS already put the window where it belongs; touching it again re-enters the transition.
+	if (s_gxFollowingNativeFullscreen) return;
+
+	// Hold the guard for the whole call. Resizing the window makes Cocoa post an event that
+	// SDL3GameEngine::handleWindowEvent answers with another setDisplayMode, which lands back here;
+	// without this the first resolution pick recurses.
+	struct ApplyGuard {
+		ApplyGuard()  { s_gxApplyingWindowMode = true;  }
+		~ApplyGuard() { s_gxApplyingWindowMode = false; }
+	} applyGuard;
+#endif
+
 	if (!windowed) {
-		if (!SDL_SetWindowFullscreen(TheSDL3Window, false)) {
+		const bool alreadyFullscreen =
+			(SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 27/07/2026 Drop the window ceiling before going fullscreen.
+		//
+		// A maximum size reaches Cocoa as -setContentMaxSize:, which caps fullscreen content as well as the
+		// window's, so a ceiling below the display size letterboxes the fullscreen picture. The windowed
+		// ceiling is the display bounds precisely so that it cannot, but a window that has moved to a smaller
+		// display carries the smaller display's ceiling with it, and this path can be reached before any
+		// resize has updated it. Clearing costs nothing and closes that case.
+		//
+		// It does NOT close the native-toggle case, which is where the bars actually came from: Ctrl+Cmd+F and
+		// the green button never reach this function, and by the time ENTER_FULLSCREEN is posted Cocoa has
+		// already sized the frame. That one is fixed by the ceiling's value, not by clearing it here.
+		SDL_SetWindowMaximumSize(TheSDL3Window, 0, 0);
+#endif
+#if !(defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE))
+		if (alreadyFullscreen && !SDL_SetWindowFullscreen(TheSDL3Window, false)) {
 			fprintf(stderr, "WARNING: SDL_SetWindowFullscreen(false) failed: %s\n", SDL_GetError());
 		}
+#endif
 
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 27/07/2026 Ask for a borderless fullscreen, not an exclusive one.
+		//
+		// Naming a display mode is what makes SDL mark the window fullscreen_exclusive, and AppKit answers
+		// that from -willUseFullScreenPresentationOptions with NSApplicationPresentationHideMenuBar. That
+		// is a hard hide, not an auto-hide: the menu bar cannot be reached by moving to the top of the
+		// screen no matter what, so releasing the cursor left nowhere to release it to.
+		//
+		// Nothing is given up by dropping it. The mode being named was the current mode, and the desktop
+		// fullscreen path lands on the same geometry -- measured 2048x1152 points / 4096x2304 pixels either
+		// way, on the same panel. macOS has no real exclusive mode-setting behind this anyway; both are a
+		// window filling a Space.
+		if (!SDL_SetWindowFullscreenMode(TheSDL3Window, NULL)) {
+			fprintf(stderr, "WARNING: SDL_SetWindowFullscreenMode(desktop) failed: %s\n", SDL_GetError());
+		}
+#else
 		SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
 		const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayId);
 		if (mode) {
@@ -574,20 +970,440 @@ static void SDL3_ApplyWindowModeForRenderConfig(Bool windowed, Int renderWidth, 
 		else {
 			fprintf(stderr, "WARNING: SDL_GetCurrentDisplayMode failed for fullscreen transition\n");
 		}
+#endif
 	}
 	else {
-		if (!SDL_SetWindowSize(TheSDL3Window, renderWidth, renderHeight)) {
-			fprintf(stderr, "WARNING: SDL_SetWindowSize(%d,%d) failed: %s\n", renderWidth, renderHeight, SDL_GetError());
+		int requestW = renderWidth;
+		int requestH = renderHeight;
+		bool skipResize = false;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 26/07/2026 renderWidth/renderHeight arrive in engine pixels, but
+		// SDL_SetWindowSize takes points. Passing pixels straight through asked Cocoa for a window
+		// twice the intended size on a 2x display, which it then clamped to the screen -- leaving
+		// the window and the engine's idea of its own resolution permanently out of step.
+		{
+			int ptW = 0, ptH = 0, pxW = 0, pxH = 0;
+			float density = 1.0f;
+			if (GeneralsX_GetMacDisplayMetrics(ptW, ptH, pxW, pxH, density) && density > 0.0f)
+			{
+				// GeneralsX @bugfix 27/07/2026 Never derive the window size from the render size.
+				//
+				// Recovering a point size from a render resolution means undoing both the density and
+				// the clarity percentage, and that round trip does not survive integer rounding and
+				// the screen clamp: measured, it crept 1654 -> 1685 -> 1860 points, one resize event
+				// at a time. An earlier form of the same mistake divided by the percentage-scaled
+				// density, which at 50% asked for a window of renderWidth POINTS -- twice as many
+				// pixels of window as the render target held, so the game drew at double size and the
+				// window framed only its top-left corner.
+				//
+				// Two kinds of caller reach here and they want opposite things. A resize the user
+				// performed arrives with a render size the current window already implies, and wants
+				// the window left alone. A resolution pick arrives with a render size the window does
+				// not imply, and wants the window changed to suit. Comparing the incoming size against
+				// what the current window would produce tells them apart without either caller having
+				// to announce itself.
+				const int percent = GeneralsX_GetRenderScalePercent();
+				int impliedW = 0, impliedH = 0;
+				int storedW = 0, storedH = 0;
+				const bool consistent =
+					GeneralsX_GetWindowedRenderSize(impliedW, impliedH) &&
+					abs(impliedW - renderWidth) <= 2 && abs(impliedH - renderHeight) <= 2 &&
+					GeneralsX_GetWindowPointSize(storedW, storedH);
+
+				// GeneralsX @bugfix 27/07/2026 Let AppKit enforce the ceiling instead of policing it.
+				//
+				// The window was observed growing on its own, a few hundred points at a time, until it was
+				// wider than the display and the render target derived from it clipped the picture.
+				// Instrumentation cleared every entry point the engine could be using: breakpoints on
+				// SDL_SetWindowSize, -[NSWindow setFrame:display:], setFrame:display:animate: and
+				// setContentSize: were never hit, yet the growth still arrived as ordinary Cocoa resize
+				// events. Whatever the source, answering it from the resize handler means resizing the window
+				// in response to a resize, which is how the earlier runaway to 5140x2004 started.
+				//
+				// A maximum size is the fix that does not need to know the cause: AppKit refuses the oversized
+				// frame itself, before any event is posted, so there is nothing to react to.
+				//
+				// The value is the FULL display bounds, not the usable area less the title bar, and the
+				// difference is a bug that took a while to place. SDL hands the maximum to Cocoa as
+				// -setContentMaxSize:, which caps the fullscreen content as well as the window's -- and
+				// fullscreen content is the whole display. A ceiling of usable-minus-bar (1002 points here)
+				// therefore left a fullscreen drawable of 4096x2004 inside a 4096x2304 panel, with the 300
+				// spare rows split as black bars above and below. Clearing the ceiling when fullscreen is
+				// entered does not help: the ENTER_FULLSCREEN event arrives after Cocoa has already sized the
+				// frame, and a native toggle gives no earlier hook at all.
+				//
+				// Display bounds still catch what this was for -- the growth ran past the display width -- and
+				// they cannot clamp a fullscreen that is exactly that size. Keeping a window inside the usable
+				// area is a separate job, done by the fit-to-usable rescale below and by
+				// GeneralsX_EnsureWindowTitleBarOnScreen.
+				SDL_Rect maxBounds;
+				if (SDL_GetDisplayBounds(SDL_GetDisplayForWindow(TheSDL3Window), &maxBounds) &&
+					maxBounds.w > 0 && maxBounds.h > 0)
+				{
+					SDL_SetWindowMaximumSize(TheSDL3Window, maxBounds.w, maxBounds.h);
+
+					// GeneralsX @diagnostic 27/07/2026 Kept after the fullscreen letterbox hunt.
+					//
+					// The bars were a window ceiling clamping the fullscreen content, and the one thing that
+					// would have identified it in an hour instead of a day is the ceiling's value at the
+					// moment it is set. Cheap -- once per resolution change, never per frame -- and the
+					// matching half is in the "entered fullscreen" line, which reports the ceiling actually
+					// in force. If a letterbox is ever reported again, compare the two.
+					fprintf(stderr, "INFO: window ceiling set to %dx%d points (display bounds)\n",
+						maxBounds.w, maxBounds.h);
+
+					// The ceiling stops a window from outgrowing the screen, but one that is already too
+					// tall is still sitting wrong, and the symptom is an unreachable title bar.
+					GeneralsX_EnsureWindowTitleBarOnScreen();
+				}
+
+				if (consistent)
+				{
+					// The window is already the size that produces this render size. Skipping the
+					// resize avoids a redundant resize event, and with it the drift that used to
+					// accumulate one event at a time.
+					skipResize = true;
+				}
+				else
+				{
+					// A genuine resolution change: this is the resolution the user picked, in physical
+					// pixels, so the window that shows it point-for-point is that over the density.
+					//
+					// The clarity percentage deliberately does not appear here. Callers that pass an
+					// already-scaled render size are caught by the consistency check above and never
+					// reach this branch, so trying to undo the percentage only corrupted the one
+					// caller that passes the raw preference -- the windowed launch, where undoing 50%
+					// asked for a 5760-point window and the screen clamp cut it to 1654.
+					(void)percent;
+					requestW = REAL_TO_INT_FLOOR((Real)renderWidth / density + 0.5f);
+					requestH = REAL_TO_INT_FLOOR((Real)renderHeight / density + 0.5f);
+
+					// Never ask for a window larger than the screen can show. Cocoa answers an
+					// oversized request by clamping one axis and not the other, which breaks the
+					// aspect ratio and used to leave the resize handler and this function trading
+					// larger and larger numbers. Scaling both axes by the tighter ratio keeps the
+					// picture correct and the request satisfiable, so the size Cocoa grants is the
+					// size that was asked for.
+					SDL_Rect usable;
+					if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(TheSDL3Window), &usable) &&
+						usable.w > 0 && usable.h > 0 && requestW > 0 && requestH > 0)
+					{
+						// The height available to CONTENT is the usable height less the title bar, since the
+						// frame has to hold both. Fitting to the full usable height instead asks for a frame
+						// that is a bar too tall, which Cocoa answers by shrinking the height alone -- and the
+						// aspect-restore pass below then has to undo it. Reserving it here means the first
+						// request is already satisfiable.
+						const int fitH_avail = (usable.h > s_gxTitleBarPoints)
+							? (usable.h - s_gxTitleBarPoints) : usable.h;
+						const Real fitW = (Real)usable.w / (Real)requestW;
+						const Real fitH = (Real)fitH_avail / (Real)requestH;
+						const Real fit = (fitW < fitH) ? fitW : fitH;
+						if (fit < 1.0f)
+						{
+							requestW = REAL_TO_INT_FLOOR((Real)requestW * fit);
+							requestH = REAL_TO_INT_FLOOR((Real)requestH * fit);
+						}
+					}
+
+					if (requestW < 320) requestW = 320;
+					if (requestH < 240) requestH = 240;
+					GeneralsX_SetWindowPointSize(requestW, requestH);
+				}
+			}
 		}
+#endif
+		if (!skipResize && !SDL_SetWindowSize(TheSDL3Window, requestW, requestH)) {
+			fprintf(stderr, "WARNING: SDL_SetWindowSize(%d,%d) failed: %s\n", requestW, requestH, SDL_GetError());
+		}
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 27/07/2026 Restore the aspect ratio after Cocoa clamps one axis.
+		//
+		// SDL_SetWindowSize takes the CONTENT size, but the screen has to hold content plus title bar.
+		// A request that fills the usable height therefore overflows by the bar's height, and Cocoa
+		// answers by shrinking the height alone -- 1838x1034 came back as 1838x1002, turning a 16:9
+		// window into 1.83:1. SDL_GetWindowBordersSize cannot be used to reserve the bar in advance:
+		// asked before the window is on screen it reports zero on all four sides.
+		//
+		// So the frame height is measured instead of predicted. Reading back what was actually granted
+		// and rescaling the untouched axis by the same ratio restores the aspect in one correction. It
+		// is a single pass, not a loop: the second request is strictly smaller than the first, so there
+		// is nothing left for Cocoa to clamp and no way for the two to trade sizes.
+		if (!skipResize)
+		{
+			int gotW = 0, gotH = 0;
+			if (SDL_GetWindowSize(TheSDL3Window, &gotW, &gotH) && gotW > 0 && gotH > 0 &&
+				(gotW != requestW || gotH != requestH))
+			{
+				// A refused height is the one honest measurement of the title bar available here, so take
+				// it while it is in hand -- everywhere else has to work from the seeded guess.
+				//
+				// The test is on the FRAME, not the content: a request only tall enough to be clamped is one
+				// whose content plus the assumed bar reaches the usable height. Testing the content against
+				// the usable height instead would never fire now that the bar is reserved before the request.
+				if (gotH < requestH)
+				{
+					SDL_Rect learnBounds;
+					if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(TheSDL3Window), &learnBounds) &&
+						learnBounds.h > 0 && (requestH + s_gxTitleBarPoints) >= learnBounds.h)
+					{
+						GeneralsX_LearnTitleBarFromClamp(learnBounds.h, gotH);
+					}
+				}
+
+				int fixW = gotW;
+				int fixH = gotH;
+				if (gotH < requestH && requestH > 0) {
+					fixW = REAL_TO_INT_FLOOR((Real)requestW * (Real)gotH / (Real)requestH + 0.5f);
+				}
+				if (gotW < requestW && requestW > 0) {
+					fixH = REAL_TO_INT_FLOOR((Real)requestH * (Real)gotW / (Real)requestW + 0.5f);
+				}
+				if (fixW < 320) fixW = 320;
+				if (fixH < 240) fixH = 240;
+
+				if (fixW != gotW || fixH != gotH) {
+					SDL_SetWindowSize(TheSDL3Window, fixW, fixH);
+					SDL_GetWindowSize(TheSDL3Window, &gotW, &gotH);
+					fprintf(stderr, "INFO: window clamped to %dx%d, aspect restored to %dx%d points\n",
+						requestW, requestH, gotW, gotH);
+				}
+			}
+			if (gotW > 0 && gotH > 0) {
+				GeneralsX_SetWindowPointSize(gotW, gotH);
+			}
+		}
+#endif
 	}
 
 	if (!windowed) {
-		if (!SDL_SetWindowFullscreen(TheSDL3Window, true)) {
+		if ((SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) == 0 &&
+			!SDL_SetWindowFullscreen(TheSDL3Window, true)) {
 			fprintf(stderr, "WARNING: SDL_SetWindowFullscreen(true) failed: %s\n", SDL_GetError());
 		}
 		SDL3_EnsureNativeFullscreen(TheSDL3Window);
 	}
 }
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+// GeneralsX @bugfix 27/07/2026 Everything a resolution change owes the rest of the engine.
+//
+// This used to send only the header-template and mouse notifications, which is why a live clarity
+// switch left the UI wrong: every .wnd layout and the control bar are laid out in render pixels and
+// cached at the resolution they were built for, so going 50% -> 100% doubled the render target while
+// the shell was still sized for the old one. The stock options screen (OptionsMenu.cpp) recreates
+// them, and any other path that changes the render resolution owes the same work.
+//
+// Null checks throughout because a windowed launch reaches the resize path before GameClient::init
+// has created the shell, the in-game UI, or the tactical view.
+void GeneralsX_NotifyResolutionChanged(void)
+{
+	if (TheHeaderTemplateManager) {
+		TheHeaderTemplateManager->onResolutionChanged();
+	}
+	if (TheMouse) {
+		TheMouse->onResolutionChanged();
+	}
+
+	// Rebuild what is sized in render pixels. Order follows the stock options screen.
+	if (TheShell) {
+		TheShell->recreateWindowLayouts();
+	}
+	if (TheInGameUI) {
+		TheInGameUI->recreateControlBar();
+		TheInGameUI->refreshCustomUiResources();
+	}
+	if (TheTacticalView) {
+		// Matches the stock path: keep the camera limits and zoom consistent with the new resolution
+		// without disturbing a scripted camera, which gets reset at game start anyway.
+		TheTacticalView->setCameraHeightAboveGroundLimitsToDefault();
+		TheTacticalView->setZoomToMax();
+	}
+}
+
+// GeneralsX @bugfix 27/07/2026 Apply a clarity change by re-rendering, not by resizing.
+//
+// The window keeps the size the user gave it. What changes is how many pixels are drawn into it: the
+// window's full pixel extent at 100%, half of it in each axis at 50%, with the swapchain upscaling
+// the difference. That is the entire difference between the two modes, and it is why switching them
+// no longer moves or resizes anything on screen.
+//
+// The previous version did the opposite -- it held the render resolution fixed and resized the window
+// to suit -- which is what made 50% draw the game at double size with the window framing only its
+// top-left corner, and what let an oversized request get clamped by macOS into a runaway.
+//
+// Returns TRUE when it did the work, FALSE in fullscreen where the caller owns the transition.
+Bool GeneralsX_ApplyRenderScaleToWindow(void)
+{
+	extern SDL_Window* TheSDL3Window;
+	if (!TheSDL3Window || !TheDisplay) return FALSE;
+	if ((SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0) return FALSE;
+
+	int targetW = 0, targetH = 0;
+	if (!GeneralsX_GetWindowedRenderSize(targetW, targetH)) return FALSE;
+
+	if ((Int)TheDisplay->getWidth() == targetW && (Int)TheDisplay->getHeight() == targetH) {
+		return TRUE;		// already there; a device reset for nothing would just cost a stutter
+	}
+
+	// The guard matters here: this is a resolution change with no window change, so the resize event
+	// the device reset provokes must not be answered by resizing the window back.
+	s_gxApplyingWindowMode = true;
+	const Bool ok = TheDisplay->setDisplayMode(targetW, targetH, TheDisplay->getBitDepth(), TRUE);
+	s_gxApplyingWindowMode = false;
+
+	if (!ok) {
+		fprintf(stderr, "WARNING: clarity change to %dx%d rejected, staying at %dx%d\n",
+			targetW, targetH, (Int)TheDisplay->getWidth(), (Int)TheDisplay->getHeight());
+		return FALSE;
+	}
+
+	extern void GeneralsX_NotifyResolutionChanged(void);
+	GeneralsX_NotifyResolutionChanged();
+
+	fprintf(stderr, "INFO: clarity change: render resolution now %dx%d (%d%%), window unchanged\n",
+		targetW, targetH, GeneralsX_GetRenderScalePercent());
+	return TRUE;
+}
+
+// GeneralsX @feature 27/07/2026 Follow macOS's own fullscreen toggle instead of owning the transition.
+//
+// Ctrl+Cmd+F and the green zoom button already worked -- the window is created SDL_WINDOW_RESIZABLE
+// and SDL3 uses native fullscreen Spaces on macOS -- but the engine never noticed. It kept the render
+// resolution it had in the window while DXVK's swapchain grew to the panel, so DX8Wrapper's pillarbox
+// stretched an 1802x1002 frame across 4096x2304: measured, a 2.27x upscale, blurrier than the 50%
+// clarity mode. TheDisplay also still reported windowed, which is wrong for two things that ask --
+// Mouse::canCapture picks its capture rule by window mode, and the pillarbox logs.
+//
+// So this is the reaction, not the transition: macOS owns the animation and the Space, and this only
+// has to say what render resolution belongs to the result.
+//
+// The two directions are not symmetrical, which cost a round of debugging. Entering, the target comes
+// from the display and not from the window, so it can be computed straight away. Leaving, the target IS
+// the window, and the window is not back yet -- so leaving only records the mode and lets the RESIZED
+// event that follows the restore do the sizing.
+//
+// Deliberately not persisted. The window mode still comes from the launcher's -fullscreen or
+// Options.ini at startup; this is a live toggle, and a toggle that silently rewrote the launch mode
+// would be the same trap the clarity switch used to be.
+void GeneralsX_OnFullscreenChanged(Bool nowFullscreen)
+{
+	extern SDL_Window* TheSDL3Window;
+	if (!TheSDL3Window || !TheDisplay || !TheWritableGlobalData) return;
+
+	// Trust the window's own flag over the event. SDL posts a LEAVE_FULLSCREEN while a windowed window
+	// is being created, before there is a render target worth resizing, and acting on that would drag
+	// the launch resolution around before the window has settled.
+	const Bool flagSaysFullscreen =
+		(SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0 ? TRUE : FALSE;
+	if (flagSaysFullscreen != nowFullscreen) return;
+
+	// A transition the engine itself started (a resolution pick, or the fullscreen launch path) is
+	// already handled by the code that started it.
+	if (s_gxApplyingWindowMode) return;
+
+	int targetW = 0, targetH = 0;
+	if (nowFullscreen) {
+		// Clear the window ceiling so a later reset cannot be clamped by it. This does NOT undo the
+		// letterboxing that a too-low ceiling causes: the frame is already sized by the time this event is
+		// posted, and clearing it here was measured to leave the drawable at 4096x2004 regardless. The bars
+		// are prevented by the ceiling's value -- display bounds, never usable-minus-bar -- where it is set.
+		SDL_SetWindowMaximumSize(TheSDL3Window, 0, 0);
+
+		// The fullscreen render target -- the same helper the launch path and the clarity switch use,
+		// so all three agree on both the percentage and the panel-native point mode.
+		if (!GeneralsX_GetFullscreenRenderSize(targetW, targetH)) {
+			fprintf(stderr, "WARNING: fullscreen transition: display metrics unavailable\n");
+			return;
+		}
+	}
+	else {
+		// GeneralsX @bugfix 27/07/2026 Do not size anything from a window Cocoa is still restoring.
+		//
+		// LEAVE_FULLSCREEN arrives BEFORE the window frame comes back -- measured, SDL still reported the
+		// fullscreen size at this point, and the handler duly logged "left fullscreen: render resolution
+		// now 2048x1152" for a window about to become 1304 points wide. That fullscreen-sized render
+		// target was then applied to a window that did not match it, and the resize events chasing the
+		// mismatch walked the window off the top of the screen.
+		//
+		// Nothing needs deriving here. The RESIZED event that follows the restore carries the settled
+		// size, and handleWindowEvent already turns exactly that into a render resolution -- it was only
+		// held off before because the fullscreen flag was still set. Setting the mode and standing aside
+		// is the whole job.
+		TheDisplay->setWindowed(TRUE);
+		TheWritableGlobalData->m_windowed = TRUE;
+
+		if (TheMouse) {
+			TheMouse->setMouseLimits();
+			TheMouse->refreshCursorCapture();
+		}
+
+		fprintf(stderr, "INFO: left fullscreen: awaiting restored window size\n");
+		return;
+	}
+
+	// Only the entering direction reaches here; leaving returned above.
+	if (targetW <= 0 || targetH <= 0) return;
+
+	// Tell the engine its window mode before the device reset: setDisplayMode is handed this same flag,
+	// and getWindowed() is read during the reset by the pillarbox path.
+	TheDisplay->setWindowed(FALSE);
+	TheWritableGlobalData->m_windowed = FALSE;
+
+	const Bool alreadyThere =
+		(Int)TheDisplay->getWidth() == targetW && (Int)TheDisplay->getHeight() == targetH;
+
+	if (!alreadyThere) {
+		// Both guards, for two different problems. s_gxApplyingWindowMode stops handleWindowEvent from
+		// answering the resize the device reset provokes; s_gxFollowingNativeFullscreen stops
+		// setDisplayMode from re-applying the window mode macOS has already applied, which is what made
+		// one keypress produce four transitions.
+		s_gxApplyingWindowMode = true;
+		s_gxFollowingNativeFullscreen = true;
+		const Bool ok = TheDisplay->setDisplayMode(
+			targetW, targetH, TheDisplay->getBitDepth(), FALSE);
+		s_gxFollowingNativeFullscreen = false;
+		s_gxApplyingWindowMode = false;
+
+		if (!ok) {
+			fprintf(stderr, "WARNING: fullscreen transition to %dx%d rejected, staying at %dx%d\n",
+				targetW, targetH,
+				(Int)TheDisplay->getWidth(), (Int)TheDisplay->getHeight());
+			return;
+		}
+
+		extern void GeneralsX_NotifyResolutionChanged(void);
+		GeneralsX_NotifyResolutionChanged();
+	}
+
+	// The capture rule differs between windowed and fullscreen, so re-evaluate it against the mode the
+	// engine is now in. A user-requested release survives this: it is a block reason, not a state.
+	if (TheMouse) {
+		TheMouse->setMouseLimits();
+		TheMouse->refreshCursorCapture();
+	}
+
+	// GeneralsX @diagnostic 27/07/2026 Kept after the fullscreen letterbox hunt.
+	//
+	// The drawable is logged next to the render size because a mismatch between them IS the letterbox: a
+	// window ceiling still in force in fullscreen left 300 pixel rows of the panel with nothing in them,
+	// while the render resolution and the swapchain both reported the full 4096x2304 and looked correct.
+	// The ceiling and the point size come with it, because a short drawable says nothing about the cause.
+	//
+	// Reading it: drawable == panel pixels means the picture fills the screen. Drawable short of the panel
+	// with a non-zero max is the ceiling clamping, and "window ceiling set to" says what put it there.
+	// One line per transition, so it is not a hot path.
+	{
+		int drawW = 0, drawH = 0, ptW = 0, ptH = 0, maxW = 0, maxH = 0;
+		SDL_GetWindowSizeInPixels(TheSDL3Window, &drawW, &drawH);
+		SDL_GetWindowSize(TheSDL3Window, &ptW, &ptH);
+		SDL_GetWindowMaximumSize(TheSDL3Window, &maxW, &maxH);
+		fprintf(stderr, "INFO: entered fullscreen: render resolution now %dx%d (%d%%), drawable %dx%d, "
+			"window %dx%d points, max %dx%d\n",
+			targetW, targetH, s_gxRenderScalePercent, drawW, drawH, ptW, ptH, maxW, maxH);
+	}
+}
+#endif
 #endif
 
 // Filtered resolution cache — built once, clamps widths to 4:3..16:9 and deduplicates.
@@ -621,6 +1437,22 @@ static void buildFilteredResolutions()
 		}
 		if (!duplicate) s_filteredResolutions.push_back({w, h, bits});
 	}
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// GeneralsX @bugfix 26/07/2026 Guarantee the display's native pixel resolution is offered.
+	// The list above comes from DXVK's EnumAdapterModes, which has no obligation to report the
+	// Retina-scaled mode the game now boots into. Without this entry the options menu cannot
+	// re-select native HiDPI after the user has switched away from it once, and the resolution
+	// combo box would show the running resolution as absent from its own list.
+	if (nativeW > 0 && nativeH > 0) {
+		bool haveNative = false;
+		for (const auto& e : s_filteredResolutions) {
+			if (e.w == nativeW && e.h == nativeH) { haveNative = true; break; }
+		}
+		if (!haveNative) s_filteredResolutions.push_back({nativeW, nativeH, 32});
+	}
+#endif
+
 	s_filteredDirty = false;
 }
 
@@ -1020,6 +1852,37 @@ void W3DDisplay::init()
 			}
 			}
 
+#if defined(SAGE_USE_SDL3) && defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+			// GeneralsX @bugfix 27/07/2026 Establish a windowed launch's clarity mode before the device
+			// exists, not by resetting it afterwards.
+			//
+			// Fullscreen gets this for free: SDL3Main injects -xres/-yres already scaled by the
+			// percentage. Windowed mode keeps the Resolution preference verbatim, so a saved 50% used to
+			// be ignored until something resized the window. Applying it with a setDisplayMode after
+			// Set_Render_Device is not an option -- the base Display::setDisplayMode dereferences
+			// TheTacticalView, which GameClient::init does not create until after this function returns,
+			// so it segfaulted on every windowed launch at 50%.
+			//
+			// Doing it here costs nothing and skips the device reset entirely. Sizing the window from the
+			// unscaled preference first is what makes the reduced render size derivable, which is the
+			// same invariant every other path uses: renderPixels = windowPixels * percent / 100.
+			if (attempt == 0 && getWindowed() && GeneralsX_GetRenderScalePercent() < 100)
+			{
+				SDL3_ApplyWindowModeForRenderConfig(TRUE, getWidth(), getHeight());
+
+				int scaledW = 0, scaledH = 0;
+				if (GeneralsX_GetWindowedRenderSize(scaledW, scaledH))
+				{
+					int winPtW = 0, winPtH = 0;
+					GeneralsX_GetWindowPointSize(winPtW, winPtH);
+					fprintf(stderr, "INFO: windowed launch at %d%%: rendering %dx%d into a %dx%d point window\n",
+						GeneralsX_GetRenderScalePercent(), scaledW, scaledH, winPtW, winPtH);
+					setWidth(scaledW);
+					setHeight(scaledH);
+				}
+			}
+#endif
+
 			// TheSuperHackers @feature Mauller 13/03/2026 Add native MSAA support, must be set before creating render device
 			WW3D::Set_MSAA_Mode((WW3D::MultiSampleModeEnum)TheWritableGlobalData->m_antiAliasLevel);
 
@@ -1055,6 +1918,8 @@ void W3DDisplay::init()
 		}
 
 		#ifdef SAGE_USE_SDL3
+		// The windowed clarity mode was already applied before the device was created, above; this is
+		// the stock call that reconciles the window with whatever mode the device ended up in.
 		SDL3_ApplyWindowModeForRenderConfig(getWindowed(), getWidth(), getHeight());
 		#endif
 
@@ -2063,17 +2928,40 @@ AGAIN:
 	static Int now;
 	now=timeGetTime();
 
-	if (TheTacticalView->getTimeMultiplier()>1)
-	{
-		static Int timeMultiplierCounter = 1;
-		timeMultiplierCounter--;
-		if (timeMultiplierCounter>1)
-			return;
-		timeMultiplierCounter = TheTacticalView->getTimeMultiplier();
-		// limit the framerate, because while fast time is on, the game logic is running as fast as it can.
-	}
+	// GeneralsX @bugfix 26/07/2026 The scripted time multiplier no longer skips render frames.
+	//
+	// This block used to draw 1 of every N frames while a script had asked for an N-times time
+	// multiplier, because SET_TIME_MULTIPLIER was implemented by uncapping the render rate and
+	// leaning on "one logic step per rendered frame" to speed the simulation up. The simulation now
+	// runs a fixed step accumulator, so the multiplier is applied to the logic cadence instead (see
+	// FramePacer::getTimeMultiplier) and skipping frames here would only make a fast-forwarded
+	// cutscene stutter at a third of the display rate while running at normal speed.
+
+	// GeneralsX @bugfix 26/07/2026 Pace the freeze-time render loop.
+	//
+	// While a script freezes time for a camera move, this loop renders and advances the camera
+	// without returning to the main engine loop, so nothing called TheFramePacer->update() and the
+	// loop ran as fast as the machine could go. The camera advances by a fixed slice of time per
+	// iteration, so on modern hardware a 3-second scripted camera move was over in a fraction of a
+	// second -- cinematic camera work played back at many times its authored speed. Waiting on the
+	// frame limiter here makes each iteration one real rendered frame, which is what the camera code
+	// assumes, and also means the loop cannot spin the CPU flat out.
+	const Bool freezeLoopWasActive = freezeTime;
+	Bool freezeLoopFirstIteration = TRUE;
 
 	do {
+		if (freezeLoopWasActive)
+		{
+			if (freezeLoopFirstIteration)
+			{
+				freezeLoopFirstIteration = FALSE;
+			}
+			else
+			{
+				TheFramePacer->update();
+			}
+		}
+
 
 		// update all views of the world - recomputes data which will affect drawing
 		if (DX8Wrapper::_Get_D3D_Device8() && (DX8Wrapper::_Get_D3D_Device8()->TestCooperativeLevel()) == D3D_OK)
@@ -3050,6 +3938,13 @@ VideoBuffer*	W3DDisplay::createVideoBuffer()
 
 	WW3DFormat displayFormat = DX8Wrapper::getBackBufferFormat();
 
+#if defined(__APPLE__)
+	// DXVK/MoltenVK can report every legacy D3D8 texture format as unsupported
+	// through the old capability table even though X8R8G8B8 managed textures are
+	// valid. Do this before the legacy selection block: that block otherwise
+	// returns nullptr before W3DVideoBuffer gets a chance to try its fallbacks.
+	format = VideoBuffer::TYPE_X8R8G8B8;
+#else
 	if ( DX8Wrapper::Get_Current_Caps()->Support_Texture_Format( displayFormat ))
 	{
 		format = W3DVideoBuffer::W3DFormatToType( displayFormat );
@@ -3082,6 +3977,12 @@ VideoBuffer*	W3DDisplay::createVideoBuffer()
 	// on low mem machines, render every video in 16bit
 	if (TheGameLODManager && (!TheGameLODManager->didMemPass() || W3DShaderManager::getChipset() == DC_GEFORCE2))
 		format = VideoBuffer::TYPE_R5G6B5;
+#endif
+	fprintf(stderr,
+		"INFO: GX create video buffer display_format=%d selected_type=%d lod_mem_pass=%d\n",
+		(int)displayFormat,
+		(int)format,
+		TheGameLODManager == nullptr || TheGameLODManager->didMemPass() ? 1 : 0);
 
 	W3DVideoBuffer *buffer = NEW W3DVideoBuffer( format );
 

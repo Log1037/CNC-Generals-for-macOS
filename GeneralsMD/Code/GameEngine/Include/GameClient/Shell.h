@@ -125,6 +125,7 @@ public:
 	void recreateWindowLayouts();
 
 	void showShellMap(Bool useShellMap );										///< access function to turn on and off the shell map
+	void queueShellMapRefresh();												///< rebuild shell map after a native window restore
 
 	void hide( Bool hide );																	///< show/hide all shell layouts
 
@@ -180,6 +181,7 @@ protected:
 	AsciiString m_pendingPushName;													///< layout name to be pushed
 	Bool m_isShellActive;																		///< TRUE when the shell is active
 	Bool m_shellMapOn;																			///< TRUE when the shell map is on
+	UnsignedInt m_shellMapRefreshTime;											///< delayed native-window recovery request
 	AnimateWindowManager *m_animateWindowManager;						///< The animate Window Manager
 	ShellMenuSchemeManager *m_schemeManager;								///< The Shell Scheme Manager
 

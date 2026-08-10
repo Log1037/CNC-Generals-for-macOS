@@ -794,6 +794,23 @@ void DeclineResolution()
 		TheShell->recreateWindowLayouts();
 
 		TheInGameUI->recreateControlBar();
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 27/07/2026 Re-apply the clarity mode after reverting.
+		//
+		// setDisplayMode above was given the picked resolution, which is the full pixel size. At below
+		// 100% the render target is meant to be smaller than that, so without this a declined
+		// resolution change would leave point-for-point mode rendering at full size until something
+		// else resized the window. No-op at 100%, and no-op in fullscreen where the caller owns it.
+		if (TheDisplay->getWindowed())
+		{
+			extern int GeneralsX_GetRenderScalePercent(void);
+			extern Bool GeneralsX_ApplyRenderScaleToWindow(void);
+			if (GeneralsX_GetRenderScalePercent() < 100) {
+				GeneralsX_ApplyRenderScaleToWindow();
+			}
+		}
+#endif
 	}
 }
 

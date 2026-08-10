@@ -166,11 +166,28 @@ bool DX8Wrapper::Pillarbox_Setup(int gameW, int gameH)
 
 	if (bbW <= 0 || bbH <= 0) {
 		if (!GetWindowSize(bbW, bbH, density)) {
-			if (!GetNativeDisplaySize(bbW, bbH, density)) {
+			if (GetNativeDisplaySize(bbW, bbH, density)) {
+				// GeneralsX @bugfix 26/07/2026 GetNativeDisplaySize reports physical pixels on all
+				// platforms now, so take it as-is instead of scaling by density a second time.
+			} else {
 				bbW = gameW;
 				bbH = gameH;
 				density = 1.0f;
 			}
+		}
+	}
+
+	// GeneralsX @bugfix 26/07/2026 Always resolve the backing-scale factor, not just on the
+	// fallback paths above. Pillarbox_Get_Rect divides the cached fit rect by s_pixelDensity to
+	// hand callers a point-space viewport (SDL3 reports mouse coordinates in points), so leaving
+	// density at 1.0f when _PresentParameters already carried a valid physical size made every
+	// click on a Retina display scale against a pixel-space rect and land at half its true
+	// position. GetWindowSize reports both units, so derive the ratio from it directly.
+	{
+		int probeW = 0, probeH = 0;
+		float probeDensity = 1.0f;
+		if (GetWindowSize(probeW, probeH, probeDensity) && probeDensity > 0.0f) {
+			density = probeDensity;
 		}
 	}
 
@@ -314,6 +331,21 @@ static void Resolve_Present_BackBuffer_Size(int gameW, int gameH, bool isWindowe
 		int windowW = gameW;
 		int windowH = gameH;
 		float density = 1.0f;
+#if defined(__APPLE__)
+		// Cocoa can briefly report the usable content area (for example 1224x750)
+		// while an SDL fullscreen Space is being established. The fullscreen
+		// swapchain itself uses the active display mode, so use that authoritative
+		// size on Apple platforms from the first D3D device creation.
+		// GeneralsX @bugfix 26/07/2026 GetNativeDisplaySize already reports physical pixels on
+		// every platform now, so do NOT scale by density here. Multiplying again produced an
+		// 8192x4608 swapchain on a 4096x2304 panel once the engine resolution itself became
+		// pixel-based -- a 2x double-count that quadrupled the fill cost.
+		if (DX8Wrapper::GetNativeDisplaySize(windowW, windowH, density)) {
+			outW = (UINT)windowW;
+			outH = (UINT)windowH;
+			return;
+		}
+#endif
 		if (DX8Wrapper::GetWindowSize(windowW, windowH, density)) {
 			outW = (UINT)windowW;
 			outH = (UINT)windowH;
@@ -442,6 +474,8 @@ void DX8Wrapper::Pillarbox_Process_Resize()
 			if (!GetNativeDisplaySize(physW, physH, density)) {
 				return;
 			}
+			// GeneralsX @bugfix 26/07/2026 GetNativeDisplaySize reports physical pixels on all
+			// platforms now; scaling by density again double-counted the backing scale factor.
 		}
 		else {
 			return;
@@ -580,7 +614,7 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 		// load from the embedded Frameworks directory explicitly. macOS keeps the
 		// bare name (resolved via DYLD_LIBRARY_PATH set by run.sh).
 		#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-		D3D8Lib = LoadLibrary("@executable_path/Frameworks/libdxvk_d3d8.0.dylib");
+		D3D8Lib = LoadLibrary("@executable_path/../Frameworks/libdxvk_d3d8.0.dylib");
 		#else
 		D3D8Lib = LoadLibrary("libdxvk_d3d8.dylib");
 		#endif
@@ -1251,6 +1285,19 @@ void DX8Wrapper::Resize_And_Position_Window()
 			::SetWindowPos (_Hwnd, nullptr, left, top, width, height, SWP_NOZORDER);
 
 			DEBUG_LOG(("Window positioned to x:%d y:%d, resized to w:%d h:%d", left, top, width, height));
+#elif defined(__APPLE__)
+			// GeneralsX @bugfix 27/07/2026 Do not resize the window from the render resolution here.
+			//
+			// ResolutionWidth/Height are PHYSICAL PIXELS, but the SDL3 SetWindowPos shim forwards them
+			// to SDL_SetWindowSize, which takes POINTS. On a 2x display that asked for a window twice
+			// as wide in pixels as the render target it was given -- so the game drew at double size
+			// and the window framed only its top-left corner. It also ran on every device reset,
+			// competing with SDL3_ApplyWindowModeForRenderConfig, which is the single owner of the
+			// window's size and already sized it correctly before this point.
+			//
+			// The fullscreen branch above skips this on SDL platforms for the same reason. Windowed
+			// mode needs the same treatment on a HiDPI display.
+			DEBUG_LOG(("Skipping explicit windowed resize on macOS; SDL3 owns window sizing"));
 #else
 			// GeneralsX @build BenderAI 10/02/2026 - SDL3 window management on Linux (no Monitor API needed)
 			::SetWindowPos (_Hwnd, nullptr, 0, 0, width, height, SWP_NOZORDER);
@@ -1594,6 +1641,23 @@ bool DX8Wrapper::Set_Device_Resolution(int width,int height,int bits,int windowe
 
 		if (width != -1) ResolutionWidth = width;
 		if (height != -1) ResolutionHeight = height;
+
+		// GeneralsX @bugfix 27/07/2026 Honour the windowed argument on the reset path too.
+		//
+		// It was accepted and then dropped, so IsWindowed kept whatever value device creation gave it
+		// for the rest of the process. Launching fullscreen and then leaving it left IsWindowed false
+		// while the window was plainly a window, and Resolve_Present_BackBuffer_Size answers that with
+		// the panel's full pixel size -- a 4096x2304 swapchain behind a 1304x1062 window, which the
+		// pillarbox then letterboxed into. Two sizes alternated in the logs as the resize handler and
+		// the stale flag disagreed about which one was right.
+		//
+		// Only the wrapper's own flag is updated here, not _PresentParameters.Windowed: changing the
+		// presentation mode needs a device recreate rather than a reset (see the TODO below), and on
+		// non-Windows builds it is pinned to TRUE for DXVK regardless.
+		if (windowed != -1) {
+			IsWindowed = (windowed != 0);
+			DX8Wrapper_IsWindowed = IsWindowed;
+		}
 
 		if (resize_window)
 		{

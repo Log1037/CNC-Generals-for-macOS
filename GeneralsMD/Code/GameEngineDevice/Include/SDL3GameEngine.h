@@ -103,6 +103,12 @@ public:
 	virtual SDL_Window* getSDLWindow(void) const { return m_SDLWindow; }
 
 protected:
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// GeneralsX @bugfix 03/08/2026 Leave the fullscreen Space while this engine is still whole;
+	// see the comment on the definition for why doing it later does not work.
+	void leaveFullscreenForShutdown(void);
+#endif
+
 	SDL_Window*		m_SDLWindow;
 	Bool			m_IsInitialized;
 	Bool			m_IsActive;

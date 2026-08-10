@@ -463,9 +463,23 @@ static bool SDL3_GetNativeDisplaySize(int& outW, int& outH, float& outDensity)
 	SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
 	const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayId);
 	if (!mode || mode->w <= 0 || mode->h <= 0) return false;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// GeneralsX @bugfix: keep outW/outH in logical points on macOS -- callers like
+	// buildFilteredResolutions() and GlobalLanguage's font scaling compare these
+	// against logical device resolutions and window dimensions, so multiplying by
+	// density here (as the non-Apple branch does) inflates those comparisons and
+	// caused the earlier "oversized resolution list / oversized fonts" regression.
+	// Report the true backing-scale density so callers that need physical pixels
+	// (DXVK's swapchain, the pillarbox backbuffer math in DX8Wrapper) can derive
+	// them by multiplying logical dims by outDensity themselves.
+	outDensity = mode->pixel_density > 0 ? mode->pixel_density : 1.0f;
+	outW = mode->w;
+	outH = mode->h;
+#else
 	outDensity = mode->pixel_density > 0 ? mode->pixel_density : 1.0f;
 	outW = (int)(mode->w * outDensity);
 	outH = (int)(mode->h * outDensity);
+#endif
 	return true;
 }
 
@@ -473,6 +487,24 @@ static bool SDL3_GetWindowSizeInPixels(int& outW, int& outH, float& outDensity)
 {
 	extern SDL_Window* TheSDL3Window;
 	if (!TheSDL3Window) return false;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	if ((SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0) {
+		SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
+		const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayId);
+		if (mode && mode->w > 0 && mode->h > 0) {
+			// GeneralsX @bugfix: this function's contract is physical/backbuffer pixels
+			// (its callers -- Pillarbox_Setup, Pillarbox_Process_Resize -- size the D3D
+			// backbuffer directly from its output). Unlike SDL3_GetNativeDisplaySize, do
+			// NOT keep this logical: multiply by density so fullscreen Retina backbuffers
+			// are sized correctly. Cocoa can transiently misreport window size during SDL
+			// fullscreen Space transitions, so still source dims from the display mode.
+			outDensity = mode->pixel_density > 0 ? mode->pixel_density : 1.0f;
+			outW = (int)(mode->w * outDensity);
+			outH = (int)(mode->h * outDensity);
+			return true;
+		}
+	}
+#endif
 	int logW = 0, logH = 0, physW = 0, physH = 0;
 	SDL_GetWindowSize(TheSDL3Window, &logW, &logH);
 	SDL_GetWindowSizeInPixels(TheSDL3Window, &physW, &physH);

@@ -158,3 +158,13 @@ if(APPLE AND SAGE_USE_MOLTENVK)
     message(STATUS "  Vulkan SDK: ${Vulkan_INCLUDE_DIRS}")
     message(STATUS "  MoltenVK: Will translate Vulkan to Metal")
 endif()
+
+# GeneralsX @build 05/08/2026 CoreGraphics/CoreFoundation for the exit display kick in SDL3Main.cpp.
+# The iOS branch above links CoreGraphics only because MoltenVK is static there; on macOS nothing
+# pulled it in for our own translation units, and CGDisplaySetDisplayMode needs it directly.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_link_libraries(core_config INTERFACE
+        "-framework CoreGraphics"
+        "-framework CoreFoundation"
+    )
+endif()

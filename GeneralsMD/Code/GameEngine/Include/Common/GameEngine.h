@@ -82,9 +82,14 @@ protected:
 
 	virtual void resetSubsystems();
 
-	Bool canUpdateGameLogic();
-	Bool canUpdateNetworkGameLogic();
-	Bool canUpdateRegularGameLogic();
+	// GeneralsX @refactor 26/07/2026 These now return how many logic steps are due for the current
+	// render frame instead of a yes/no. The simulation runs at a fixed step, so when the render
+	// frame rate falls below the logic cadence -- a scripted SET_FPS_LIMIT 20 against a 30 Hz
+	// simulation, or a frame spike -- the correct behaviour is to run several steps, not to slow the
+	// simulation down. 0 means no step is due yet. See FramePacer::getLogicStepsThisFrame.
+	Int countLogicStepsDue();
+	Int countNetworkLogicStepsDue();
+	Int countRegularLogicStepsDue();
 
 	virtual FileSystem *createFileSystem();								///< Factory for FileSystem classes
 	virtual LocalFileSystem *createLocalFileSystem() = 0;	///< Factory for LocalFileSystem classes

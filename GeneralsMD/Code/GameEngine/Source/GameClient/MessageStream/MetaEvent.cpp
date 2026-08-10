@@ -156,6 +156,7 @@ static const LookupListRec GameMessageMetaTypeNames[] =
 	{ "DECREASE_MAX_RENDER_FPS",									GameMessage::MSG_META_DECREASE_MAX_RENDER_FPS },
 	{ "INCREASE_LOGIC_TIME_SCALE",								GameMessage::MSG_META_INCREASE_LOGIC_TIME_SCALE },
 	{ "DECREASE_LOGIC_TIME_SCALE",								GameMessage::MSG_META_DECREASE_LOGIC_TIME_SCALE },
+	{ "TOGGLE_EXTRAS_MENU",												GameMessage::MSG_META_TOGGLE_EXTRAS_MENU },
 	{ "TOGGLE_LOWER_DETAILS",											GameMessage::MSG_META_TOGGLE_LOWER_DETAILS },
 	{ "TOGGLE_CONTROL_BAR",												GameMessage::MSG_META_TOGGLE_CONTROL_BAR },
 	{ "TOGGLE_PLAYER_OBSERVER",										GameMessage::MSG_META_TOGGLE_PLAYER_OBSERVER },
@@ -749,7 +750,7 @@ void MetaMap::generateMetaMap()
 		MetaMapRec *map = getMetaMapRec(GameMessage::MSG_META_INCREASE_MAX_RENDER_FPS);
 		if (map->m_key == MK_NONE)
 		{
-			map->m_key = MK_KPPLUS;
+			map->m_key = MK_RBRACKET;
 			map->m_transition = DOWN;
 			map->m_modState = CTRL;
 			map->m_usableIn = COMMANDUSABLE_EVERYWHERE;
@@ -760,7 +761,7 @@ void MetaMap::generateMetaMap()
 		MetaMapRec *map = getMetaMapRec(GameMessage::MSG_META_DECREASE_MAX_RENDER_FPS);
 		if (map->m_key == MK_NONE)
 		{
-			map->m_key = MK_KPMINUS;
+			map->m_key = MK_LBRACKET;
 			map->m_transition = DOWN;
 			map->m_modState = CTRL;
 			map->m_usableIn = COMMANDUSABLE_EVERYWHERE;
@@ -771,7 +772,7 @@ void MetaMap::generateMetaMap()
 		MetaMapRec *map = getMetaMapRec(GameMessage::MSG_META_INCREASE_LOGIC_TIME_SCALE);
 		if (map->m_key == MK_NONE)
 		{
-			map->m_key = MK_KPPLUS;
+			map->m_key = MK_RBRACKET;
 			map->m_transition = DOWN;
 			map->m_modState = SHIFT_CTRL;
 			map->m_usableIn = COMMANDUSABLE_EVERYWHERE;
@@ -782,9 +783,23 @@ void MetaMap::generateMetaMap()
 		MetaMapRec *map = getMetaMapRec(GameMessage::MSG_META_DECREASE_LOGIC_TIME_SCALE);
 		if (map->m_key == MK_NONE)
 		{
-			map->m_key = MK_KPMINUS;
+			map->m_key = MK_LBRACKET;
 			map->m_transition = DOWN;
 			map->m_modState = SHIFT_CTRL;
+			map->m_usableIn = COMMANDUSABLE_EVERYWHERE;
+		}
+	}
+	{
+		// GeneralsX @feature 26/07/2026 Default binding for the cadence/extras panel.
+		// CTRL is required because a bare letter would collide with the unit hotkeys, and G is not
+		// bound by any stock CommandMap.ini, so this does not steal an existing binding. Usable in
+		// the shell as well as in game: the render rate is worth setting before a mission starts.
+		MetaMapRec *map = getMetaMapRec(GameMessage::MSG_META_TOGGLE_EXTRAS_MENU);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_G;
+			map->m_transition = DOWN;
+			map->m_modState = CTRL;
 			map->m_usableIn = COMMANDUSABLE_EVERYWHERE;
 		}
 	}
@@ -911,6 +926,17 @@ void MetaMap::generateMetaMap()
 	}
 	{
 		// Is useful for Generals and Zero Hour.
+		MetaMapRec *map = getMetaMapRec(GameMessage::MSG_META_DEMO_ADD_CASH);
+		if (map->m_key == MK_NONE)
+		{
+			map->m_key = MK_N;
+			map->m_transition = DOWN;
+			map->m_modState = ALT;
+			map->m_usableIn = COMMANDUSABLE_GAME;
+		}
+	}
+	{
+		// Is useful for Generals and Zero Hour.
 		MetaMapRec *map = TheMetaMap->getMetaMapRec(GameMessage::MSG_META_DEMO_BEGIN_ADJUST_DEFAULTPITCH);
 		if (map->m_key == MK_NONE)
 		{
@@ -953,4 +979,3 @@ void MetaMap::verifyMetaMap()
 {
 	MetaMap::parseMetaMap(ini);
 }
-

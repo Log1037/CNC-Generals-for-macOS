@@ -50,6 +50,8 @@
 #include "WW3D2/textureloader.h"
 #include "W3DDevice/GameClient/W3DVideoBuffer.h"
 
+#include <cstdio>
+
 //----------------------------------------------------------------------------
 //         Externals
 //----------------------------------------------------------------------------
@@ -118,37 +120,120 @@ Bool W3DVideoBuffer::allocate( UnsignedInt width, UnsignedInt height )
 {
 	free();
 
-	m_width = width;
-	m_height = height;
-	m_textureWidth = width;
-	m_textureHeight = height;
+	UnsignedInt textureWidth = width;
+	UnsignedInt textureHeight = height;
 	unsigned int temp_depth=1;
-	TextureLoader::Validate_Texture_Size( m_textureWidth, m_textureHeight, temp_depth);
+	TextureLoader::Validate_Texture_Size( textureWidth, textureHeight, temp_depth);
 
-	WW3DFormat w3dFormat = TypeToW3DFormat(  m_format );
+	// Direct3D 8-era format capability reporting is not completely reliable
+	// through DXVK/MoltenVK. In particular, a format can be reported as usable
+	// yet fail when the managed texture is locked for FFmpeg output. Try the
+	// preferred format first (32-bit XRGB first on Apple), then the other video
+	// formats supported by the decoder. This fixes every VideoBuffer consumer,
+	// rather than special-casing individual loading screens.
+#if defined(__APPLE__)
+	const VideoBuffer::Type candidates[] = {
+		VideoBuffer::TYPE_X8R8G8B8,
+		m_format,
+		VideoBuffer::TYPE_R5G6B5,
+		VideoBuffer::TYPE_X1R5G5B5,
+		VideoBuffer::TYPE_R8G8B8
+	};
+#else
+	const VideoBuffer::Type candidates[] = {
+		m_format,
+		VideoBuffer::TYPE_X8R8G8B8,
+		VideoBuffer::TYPE_R8G8B8,
+		VideoBuffer::TYPE_R5G6B5,
+		VideoBuffer::TYPE_X1R5G5B5
+	};
+#endif
 
-	if ( w3dFormat == WW3D_FORMAT_UNKNOWN )
+	VideoBuffer::Type attempted[NUM_TYPES] = {};
+	Int attemptedCount = 0;
+	for (VideoBuffer::Type candidate : candidates)
 	{
-		return FALSE;
+		if (candidate <= VideoBuffer::TYPE_UNKNOWN || candidate >= VideoBuffer::NUM_TYPES)
+			continue;
+
+		Bool duplicate = FALSE;
+		for (Int i = 0; i < attemptedCount; ++i)
+		{
+			if (attempted[i] == candidate)
+			{
+				duplicate = TRUE;
+				break;
+			}
+		}
+		if (duplicate)
+			continue;
+		attempted[attemptedCount++] = candidate;
+
+		m_format = candidate;
+		m_width = width;
+		m_height = height;
+		m_textureWidth = textureWidth;
+		m_textureHeight = textureHeight;
+
+		WW3DFormat w3dFormat = TypeToW3DFormat(m_format);
+		if (w3dFormat == WW3D_FORMAT_UNKNOWN)
+			continue;
+
+		m_texture = MSGNEW("TextureClass") TextureClass(
+			m_textureWidth,
+			m_textureHeight,
+			w3dFormat,
+			MIP_LEVELS_1,
+			TextureClass::POOL_MANAGED,
+			false,
+			false);
+
+		if (m_texture == nullptr || m_texture->Peek_D3D_Texture() == nullptr)
+		{
+			fprintf(stderr,
+				"WARN: GX video buffer texture creation failed type=%d size=%ux%u texture=%ux%u\n",
+				(int)m_format,
+				width,
+				height,
+				m_textureWidth,
+				m_textureHeight);
+			free();
+			continue;
+		}
+
+		void *bits = lock();
+		if (bits == nullptr)
+		{
+			fprintf(stderr,
+				"WARN: GX video buffer lock failed type=%d size=%ux%u texture=%ux%u\n",
+				(int)m_format,
+				width,
+				height,
+				m_textureWidth,
+				m_textureHeight);
+			free();
+			continue;
+		}
+
+		fprintf(stderr,
+			"INFO: GX video buffer allocated type=%d size=%ux%u texture=%ux%u pitch=%u\n",
+			(int)m_format,
+			width,
+			height,
+			m_textureWidth,
+			m_textureHeight,
+			m_pitch);
+		unlock();
+		return TRUE;
 	}
 
-	m_texture  = MSGNEW("TextureClass") TextureClass ( m_textureWidth, m_textureHeight, w3dFormat, MIP_LEVELS_1 );
-
-	if ( m_texture == nullptr )
-	{
-		return FALSE;
-	}
-
-	if ( lock() == nullptr )
-	{
-		free();
-		return FALSE;
-	}
-
-	unlock();
-
-
-	return TRUE;
+	fprintf(stderr,
+		"ERROR: GX video buffer allocation exhausted all formats size=%ux%u texture=%ux%u\n",
+		width,
+		height,
+		textureWidth,
+		textureHeight);
+	return FALSE;
 }
 
 //============================================================================
@@ -167,6 +252,10 @@ W3DVideoBuffer::~W3DVideoBuffer()
 void*		W3DVideoBuffer::lock()
 {
 	void *mem = nullptr;
+	if (m_texture == nullptr || m_texture->Peek_D3D_Texture() == nullptr)
+	{
+		return nullptr;
+	}
 
 	if ( m_surface != nullptr )
 	{
@@ -203,7 +292,7 @@ void		W3DVideoBuffer::unlock()
 
 Bool		W3DVideoBuffer::valid()
 {
-	return m_texture != nullptr;
+	return m_texture != nullptr && m_texture->Peek_D3D_Texture() != nullptr;
 }
 
 //============================================================================

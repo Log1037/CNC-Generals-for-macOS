@@ -88,6 +88,7 @@
 #include "GameClient/ClientInstance.h"
 #include "GameClient/FXList.h"
 #include "GameClient/GameClient.h"
+#include "GameClient/Display.h"
 #include "GameClient/Keyboard.h"
 #include "GameClient/Shell.h"
 #include "GameClient/GameText.h"
@@ -100,6 +101,7 @@
 #include "GameClient/GlobalLanguage.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/GUICallbacks.h"
+#include "GameClient/InGameUI.h"
 
 #include "GameNetwork/NetworkInterface.h"
 #include "GameNetwork/WOLBrowser/WebBrowser.h"
@@ -731,6 +733,44 @@ void GameEngine::init()
 
 		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
 
+		// GeneralsX @feature 26/07/2026 Decouple the simulation from the render rate by default.
+		//
+		// With the logic time scale disabled the engine runs exactly one logic step per rendered
+		// frame, which is what the 2003 game did while it was hard capped at 30 fps. On a 60 Hz or
+		// 120 Hz display that same code plays the game at 2x or 4x speed, which is why upstream
+		// leaves the render limit at 30. This port wants a smooth render rate and original game
+		// speed at the same time, so the logic time scale is always on and pinned to the SAGE
+		// baseline of 30 Hz; the render limit is then free to be whatever the display can do.
+		TheFramePacer->setLogicTimeScaleFps(LOGICFRAMES_PER_SECOND);
+		TheFramePacer->enableLogicTimeScale(TRUE);
+
+		// Launcher overrides. GX_RENDER_FPS changes how often the frame is drawn and nothing else;
+		// GX_LOGIC_FPS changes simulation speed (30 = 1.0x, 66 = the familiar 2.2x Cheat Engine
+		// behaviour) and is independent of the render rate.
+		const char *renderFpsEnv = getenv("GX_RENDER_FPS");
+		const char *logicFpsEnv = getenv("GX_LOGIC_FPS");
+		if (renderFpsEnv != nullptr) {
+			const Int renderFps = atoi(renderFpsEnv);
+			if (renderFps >= 30 && renderFps <= 1000) {
+				TheWritableGlobalData->m_useFpsLimit = TRUE;
+				TheWritableGlobalData->m_framesPerSecondLimit = renderFps;
+				TheFramePacer->setFramesPerSecondLimit(renderFps);
+			}
+		}
+		if (logicFpsEnv != nullptr) {
+			// GeneralsX @tweak 26/07/2026 No longer clamped to the render fps. The simulation runs
+			// its own fixed-step accumulator, so the two cadences are genuinely independent: a
+			// 30 Hz simulation is correct at a 20 fps render cap and a 120 fps one alike.
+			const Int logicFps = clamp<Int>(LOGICFRAMES_PER_SECOND / 4, atoi(logicFpsEnv), 240);
+			TheFramePacer->setLogicTimeScaleFps(logicFps);
+			TheFramePacer->enableLogicTimeScale(TRUE);
+			fprintf(stderr,
+				"INFO: GX cadence profile render=%d fps logic=%d fps speed=%.3fx\n",
+				TheFramePacer->getFramesPerSecondLimit(),
+				logicFps,
+				(Real)logicFps / LOGICFRAMES_PER_SECONDS_REAL);
+		}
+
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_musicOn, AudioAffect_Music);
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_soundsOn, AudioAffect_Sound);
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_sounds3DOn, AudioAffect_Sound3D);
@@ -776,6 +816,16 @@ void GameEngine::init()
 		{
 			AsciiString fname = TheGlobalData->m_initialFile;
 			fname.toLower();
+
+			// GeneralsX @tweak 26/07/2026 Report a -file argument that resolved to nothing usable.
+			// DEBUG_LOG is compiled out of the release build, which is the only configuration this
+			// port ships, so a mistyped map path was silently ignored: the game just sat on the
+			// shell map with no indication why.
+			if (!fname.endsWithNoCase(".map"))
+			{
+				fprintf(stderr, "WARNING: GX -file '%s' is not a .map path, ignoring it\n",
+					TheGlobalData->m_initialFile.str());
+			}
 
 			if (fname.endsWithNoCase(".map"))
 			{
@@ -882,46 +932,68 @@ void GameEngine::resetSubsystems()
 }
 
 /// -----------------------------------------------------------------------------------------------
-Bool GameEngine::canUpdateGameLogic()
+Int GameEngine::countLogicStepsDue()
 {
 	// Must be first.
 	TheGameLogic->preUpdate();
 
+	// GeneralsX @bugfix 26/07/2026 Removed the cinematic time scale.
+	//
+	// This used to detect "we are in a cinematic" (letterboxed or input disabled) and switch the
+	// FramePacer to a doubled logic cadence, which it implemented by scaling the GLOBAL game clock
+	// via GeneralsXSetGameTimeScale. Two things were wrong with that. It compensated for a symptom:
+	// cinematics ran slow only because a scripted SET_FPS_LIMIT 20 dragged the simulation down to
+	// the render rate, which is now fixed properly by running several fixed-size logic steps per
+	// render frame. And scaling the global clock corrupted everything else that reads
+	// timeGetTime() as real time -- most visibly FFmpegVideoStream::isFrameReady, so in-engine
+	// video played at the wrong rate and desynced from its audio.
+
 	TheFramePacer->setTimeFrozen(isTimeFrozen());
 	TheFramePacer->setGameHalted(isGameHalted());
 
-	if (TheNetwork != nullptr)
-	{
-		return canUpdateNetworkGameLogic();
-	}
-	else
-	{
-		return canUpdateRegularGameLogic();
-	}
+	const Int steps = (TheNetwork != nullptr)
+		? countNetworkLogicStepsDue()
+		: countRegularLogicStepsDue();
+
+	TheFramePacer->setLogicStepsThisFrame(steps);
+
+	return steps;
 }
 
 /// -----------------------------------------------------------------------------------------------
-Bool GameEngine::canUpdateNetworkGameLogic()
+Int GameEngine::countNetworkLogicStepsDue()
 {
 	DEBUG_ASSERTCRASH(TheNetwork != nullptr, ("TheNetwork is null"));
 
+	// The network dictates the cadence; never run ahead of it.
 	if (TheNetwork->isFrameDataReady())
 	{
 		// Important: The Network is definitely no longer stalling.
 		TheFramePacer->setGameHalted(false);
 
-		return true;
+		return 1;
 	}
 
-	return false;
+	return 0;
 }
 
 /// -----------------------------------------------------------------------------------------------
-Bool GameEngine::canUpdateRegularGameLogic()
+Int GameEngine::countRegularLogicStepsDue()
 {
 	const Bool enabled = TheFramePacer->isLogicTimeScaleEnabled();
-	const Int logicTimeScaleFps = TheFramePacer->getLogicTimeScaleFps();
-	const Int maxRenderFps = TheFramePacer->getFramesPerSecondLimit();
+	// GeneralsX @bugfix 16/07/2026 Query the cadence ignoring frozen/halted state.
+	// GameEngine::update() already gates the actual logic step on !isGameHalted()
+	// && !isTimeFrozen(); this function only decides whether a discrete step is
+	// due according to the fps cadence. Without these flags, getActualLogicTimeScaleFps()
+	// returns 0 while frozen, making targetFrameTime = 1.0f/0 = +inf below, which this
+	// function can never reach: it then returns false forever, which also permanently
+	// zeroes canUpdateScript in GameEngine::update() (canUpdateScript depends on this
+	// return value) and blocks the very TheScriptEngine::UPDATE() calls that were
+	// supposed to keep progressing scripted camera/cinematic state during a freeze,
+	// so nothing can ever end the freeze. Observed as a hard hang on a cinematic
+	// that calls CAMERA_MOD_FREEZE_TIME without a Scripted_* camera action following it.
+	const Int logicTimeScaleFps = TheFramePacer->getActualLogicTimeScaleFps(
+		FramePacer::IgnoreFrozenTime | FramePacer::IgnoreHaltedGame);
 
 #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	const Bool useFastMode = TheGlobalData->m_TiVOFastMode;
@@ -929,26 +1001,50 @@ Bool GameEngine::canUpdateRegularGameLogic()
 	const Bool useFastMode = TheGlobalData->m_TiVOFastMode && TheGameLogic->isInReplayGame();
 #endif
 
-	if (useFastMode || !enabled || logicTimeScaleFps >= maxRenderFps)
+	if (useFastMode || !enabled || logicTimeScaleFps <= 0)
 	{
-		// Logic time scale is uncapped or larger equal Render FPS. Update straight away.
-		return true;
-	}
-	else
-	{
-		// TheSuperHackers @tweak xezon 06/08/2025
-		// The logic time step is now decoupled from the render update.
-		const Real targetFrameTime = 1.0f / logicTimeScaleFps;
-		m_logicTimeAccumulator += min(TheFramePacer->getUpdateTime(), targetFrameTime);
-
-		if (m_logicTimeAccumulator >= targetFrameTime)
-		{
-			m_logicTimeAccumulator -= targetFrameTime;
-			return true;
-		}
+		// Logic is bound to the render update: exactly one step per render frame, as in the
+		// original game. Fast mode deliberately does the same at an uncapped render rate.
+		m_logicTimeAccumulator = 0.0f;
+		return 1;
 	}
 
-	return false;
+	// GeneralsX @bugfix 26/07/2026 Run every logic step that real time has accrued.
+	//
+	// This accumulator used to clamp its input to one target frame time and return at most one
+	// step, so the render frame rate became an upper bound on simulation speed. A scripted
+	// SET_FPS_LIMIT 20 with a 30 Hz simulation therefore played the whole cinematic -- and any
+	// gameplay under that script -- at 2/3 speed, and a rendering hitch permanently stole
+	// simulation time instead of being caught up. Now the full render delta accumulates and as
+	// many fixed-size steps run as it pays for.
+	//
+	// Determinism is unaffected: steps stay discrete, fixed size and ordered, so the command
+	// stream, replays and CRCs see exactly the same sequence they always did. Only how many of
+	// them are issued per rendered frame changes. Network games never reach this path.
+	//
+	// MaxStepsPerFrame bounds catch-up so a long stall (loading, alt-tab, a debugger break)
+	// cannot produce a burst of hundreds of steps and a spiral of death where each oversized
+	// catch-up batch takes longer than the time it is trying to reclaim. The matching bound
+	// lives in FramePacer::getActualLogicTimeScaleOverFpsRatio so client animations agree.
+	const Int MaxStepsPerFrame = 8;
+
+	const Real targetFrameTime = 1.0f / (Real)logicTimeScaleFps;
+	m_logicTimeAccumulator += TheFramePacer->getUpdateTime();
+
+	Int steps = 0;
+	while (m_logicTimeAccumulator >= targetFrameTime && steps < MaxStepsPerFrame)
+	{
+		m_logicTimeAccumulator -= targetFrameTime;
+		++steps;
+	}
+
+	if (steps == MaxStepsPerFrame)
+	{
+		// Drop the unpayable remainder rather than carrying a debt that can never be worked off.
+		m_logicTimeAccumulator = 0.0f;
+	}
+
+	return steps;
 }
 
 /// -----------------------------------------------------------------------------------------------
@@ -979,20 +1075,87 @@ void GameEngine::update()
 			}
 		}
 
-		const Bool canUpdate = canUpdateGameLogic();
+		const Int logicSteps = countLogicStepsDue();
+		const Bool canUpdate = logicSteps > 0;
 		const Bool canUpdateLogic = canUpdate && !TheFramePacer->isGameHalted() && !TheFramePacer->isTimeFrozen();
 		const Bool canUpdateScript = canUpdate && !TheFramePacer->isGameHalted();
 
 		if (canUpdateLogic)
 		{
+			// GeneralsX @bugfix 26/07/2026 Run every step that is due, not just one.
+			// TheGameClient->step() interpolates client state towards the next logic frame, so it
+			// belongs once per render frame, ahead of the batch. TheGameLogic->UPDATE() is the
+			// fixed-size simulation step and runs logicSteps times.
 			TheGameClient->step();
-			TheGameLogic->UPDATE();
+
+			for (Int step = 0; step < logicSteps; ++step)
+			{
+				TheGameLogic->UPDATE();
+			}
 		}
 		else if (canUpdateScript)
 		{
 			// TheSuperHackers @info Still update the Script Engine to allow
 			// for scripted camera movements while the time is frozen.
 			TheScriptEngine->UPDATE();
+		}
+
+		// GeneralsX @diag 16/07/2026 Once-per-second probe of logic/camera/cadence state, off unless
+		// GX_STATE_PROBE=1. Distinguishes "the logic frame is not advancing" from "logic advances
+		// but no scripted camera is progressing the scene", and shows the render/logic cadence the
+		// engine actually settled on. Kept because release builds compile DEBUG_LOG out, so this is
+		// the only window into a stuck cinematic on a shipped build.
+		{
+			static const Bool probeEnabled = getenv("GX_STATE_PROBE") != nullptr
+				&& atoi(getenv("GX_STATE_PROBE")) != 0;
+			static UnsignedInt lastLoggedFrame = 0xFFFFFFFF;
+			static uint64_t lastLogTimeMs = 0;
+			const uint64_t nowMs = probeEnabled ? GeneralsXGetRealTimeMilliseconds() : 0;
+			if (probeEnabled && nowMs - lastLogTimeMs >= 1000)
+			{
+				lastLogTimeMs = nowMs;
+				const UnsignedInt frame = TheGameLogic ? TheGameLogic->getFrame() : 0;
+				fprintf(stderr,
+					"INFO: GX state-probe frame=%u (advanced=%d) canUpdate=%d canUpdateLogic=%d canUpdateScript=%d "
+					"gameHalted=%d timeFrozen=%d gamePaused=%d isInGame=%d isInShellGame=%d network=%d "
+					"letterBoxed=%d inputEnabled=%d cameraMovementFinished=%d scriptedCamera=%d timeMultiplier=%d "
+					"logicSteps=%d renderFps=%.1f logicFramesThisSecond=%d res=%dx%d "
+					"maxFps=%d actualMaxFps=%d limitOn=%d useFpsLimit=%d logicScaleFps=%d "
+					"logicScaleOn=%d actualLogicFps=%d logicOverFps=%.2f "
+					"frozenByView=%d frozenByDebug=%d frozenByScript=%d\n",
+					frame,
+					frame != lastLoggedFrame,
+					canUpdate, canUpdateLogic, canUpdateScript,
+					TheFramePacer->isGameHalted(), TheFramePacer->isTimeFrozen(),
+					TheGameLogic ? TheGameLogic->isGamePaused() : -1,
+					TheGameLogic ? TheGameLogic->isInGame() : -1,
+					TheGameLogic ? TheGameLogic->isInShellGame() : -1,
+					TheNetwork != nullptr,
+					TheDisplay ? TheDisplay->isLetterBoxed() : -1,
+					TheInGameUI ? TheInGameUI->getInputEnabled() : -1,
+					TheTacticalView ? TheTacticalView->isCameraMovementFinished() : -1,
+					TheTacticalView ? TheTacticalView->isDoingScriptedCamera() : -1,
+					TheTacticalView ? TheTacticalView->getTimeMultiplier() : -1,
+					logicSteps,
+					TheFramePacer->getUpdateFps(),
+					lastLoggedFrame == 0xFFFFFFFF || frame < lastLoggedFrame
+						? 0 : (Int)(frame - lastLoggedFrame),
+					TheDisplay ? (Int)TheDisplay->getWidth() : -1,
+					TheDisplay ? (Int)TheDisplay->getHeight() : -1,
+					TheFramePacer->getFramesPerSecondLimit(),
+					TheFramePacer->getActualFramesPerSecondLimit(),
+					TheFramePacer->isFramesPerSecondLimitEnabled(),
+					TheGlobalData ? TheGlobalData->m_useFpsLimit : -1,
+					TheFramePacer->getLogicTimeScaleFps(),
+					TheFramePacer->isLogicTimeScaleEnabled(),
+					TheFramePacer->getActualLogicTimeScaleFps(),
+					TheFramePacer->getActualLogicTimeScaleOverFpsRatio(),
+					TheTacticalView ? (TheTacticalView->isTimeFrozen()
+						&& !TheTacticalView->isCameraMovementFinished()) : -1,
+					TheScriptEngine ? TheScriptEngine->isTimeFrozenDebug() : -1,
+					TheScriptEngine ? TheScriptEngine->isTimeFrozenScript() : -1);
+				lastLoggedFrame = frame;
+			}
 		}
 	}
 }
