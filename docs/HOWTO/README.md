@@ -1,22 +1,32 @@
-# HOWTO Tutorials
+# 使用指南
 
-Step-by-step guides for common tasks in GeneralsX.
+[中文](README.md) | [English](README.en.md)
 
-## Available Tutorials
+这里收录 GeneralsX 的用户操作教程。
 
-| Tutorial | Description |
+## 中文文档
+
+| 文档 | 内容 |
 |---|---|
-| [Installation](INSTALLATION.md) | Install GeneralsX on Linux (Flatpak) or macOS |
-| [Getting the Game Files](GETTING_THE_GAME_FILES.md) | Obtain original game assets (Steam, CrossOver, SteamCMD) |
-| [macOS Customized Fork Quick Start / macOS 二次修改版上手指南](MACOS_LOCAL_FORK_QUICK_START.md) | Transfer a Windows retail install, build, deploy, and package the local macOS app / 从 Windows 复制正版资源并构建、部署和打包 App |
-| [SagePatch Configuration](SAGEPATCH_CONFIGURATION.md) | Configure camera height, scroll speed, terrain draw distance, and other QoL settings |
-| [Russian Localization](RUSSIAN_LOCALIZATION.md) | Apply Russian language patch (EN + RU instructions) |
+| [macOS 二次修改版上手指南](MACOS_LOCAL_FORK_QUICK_START.md) | 从 Windows 复制正版资源，在 macOS 上构建、部署和打包 App |
+| [macOS 构建指南](../BUILD/MACOS.md) | Apple Silicon 源码构建、DXVK、部署和排错 |
+| [二次修改工程日志](../WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.md) | 实际遇到的问题、修改分类、验证和发布记录 |
 
-## Contributing
+## 其他现有教程
 
-To add a new tutorial:
+以下上游教程目前主要使用英文：
 
-1. Create a new `.md` file in this directory
-2. Use UPPERCASE_WITH_UNDERSCORES naming (e.g., `MY_NEW_TUTORIAL.md`)
-3. Add an entry to the table above
-4. Follow the existing tutorial format (title, overview, steps, troubleshooting)
+| 文档 | 内容 |
+|---|---|
+| [安装说明](INSTALLATION.md) | Linux Flatpak 和 macOS 安装说明 |
+| [游戏文件获取说明](GETTING_THE_GAME_FILES.md) | Steam、CrossOver 和 SteamCMD 游戏资源准备 |
+| [SagePatch 配置](SAGEPATCH_CONFIGURATION.md) | 镜头高度、滚动速度、地形距离等设置 |
+| [俄语本地化](RUSSIAN_LOCALIZATION.md) | 英语与俄语本地化说明 |
+
+## 添加教程
+
+1. 在本目录中新建 Markdown 文件。
+2. 使用 `UPPERCASE_WITH_UNDERSCORES.md` 命名。
+3. 面向发布的文档分别提供中文默认版和 `.en.md` 英文版。
+4. 在中文和英文索引中同时增加链接。
+5. 教程应包含用途、步骤、验证方法和常见问题。

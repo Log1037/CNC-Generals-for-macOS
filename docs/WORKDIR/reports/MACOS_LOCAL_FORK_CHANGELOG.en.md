@@ -1,6 +1,6 @@
-# macOS Local Fork Engineering Log — English Edition
+# macOS Local Fork Engineering Log
 
-[Bilingual overview / 中英对照总览](MACOS_LOCAL_FORK_CHANGELOG.md) · [中文完整版本](MACOS_LOCAL_FORK_CHANGELOG.zh-CN.md)
+[中文](MACOS_LOCAL_FORK_CHANGELOG.md) | [English](MACOS_LOCAL_FORK_CHANGELOG.en.md)
 
 - Last consolidated: 2026-08-10
 - Local baseline: `ammaarreshi/Generals-Mac-iOS-iPad` `main` at `c5c8c4d3e757033d9ab464f6bd6e15e91e0e742f`
@@ -17,8 +17,8 @@ the current working tree.
 The detailed investigation history remains in
 `docs/DEV_BLOG/2026-07-DIARY.md`. That diary includes rejected approaches,
 instrumentation, and machine-specific measurements. This document describes the
-surviving changes that would need to be reviewed, split into commits, and made
-portable before publishing the fork.
+surviving changes in the published source, together with the validation boundary
+that remains after review, portability cleanup, and commit splitting.
 
 ## Lineage and scope
 
@@ -37,23 +37,20 @@ of Generals and Zero Hour is still required.
 
 ## Current repository state
 
-As of this consolidation pass:
+As of the 2026-08-10 source publication:
 
-- `HEAD` and `origin/main` both point to `c5c8c4d3e`.
-- The customization exists primarily as an uncommitted working tree.
-- The tracked delta and the untracked file count are deliberately not quoted here.
-  Earlier passes of this document carried hard figures (80 files / 5,075 insertions
-  / 892 deletions / eight untracked files) that later work invalidated, and a stale
-  number in a changelog is worse than no number because it reads as verified.
-  Measure at branch time instead: `git diff --shortstat` and
-  `git status --porcelain | grep -c '^??'`.
-- The local user reports that the current installed build now provides a good
-  overall play experience.
-- This documentation pass did not launch or automate the game and did not rerun
-  an isolated A/B test for every fix.
+- The customization was split into eight focused commits.
+- [PR #1](https://github.com/Log1037/Generals-Mac-iOS-iPad/pull/1) merged those
+  commits into the public fork's `main` branch.
+- Commercial assets, saves, private fonts, build products, machine-local archives,
+  and the maintainer's custom ICNS remain excluded.
+- The local user reports that the installed build provides a good overall play
+  experience.
+- This documentation pass did not launch or automate the game and did not rerun an
+  isolated A/B test for every fix.
 
-This is therefore a good local integration build, but not yet a reviewable
-public release branch.
+The repository is now a reviewable source release. It is not a binary game-data
+distribution, and a clean-machine end-to-end build remains follow-up work.
 
 ## What is intended to go public
 
@@ -103,10 +100,10 @@ Net effect: the same committed code renders sans-serif (PingFang) on this machin
 and serif (宋体, via the fetched Noto Serif SC) on a fresh public install. The only
 difference is one ignored file.
 
-### Branch-preparation status
+### Publication status
 
-- A dedicated `agent/macos-personal-customizations` branch now protects the
-  working tree while it is split into reviewable commits.
+- The temporary `agent/macos-personal-customizations` branch was split into eight
+  reviewable commits and merged through PR #1.
 - Engine and launcher defaults no longer contain this machine's external-volume
   path. The launcher supports environment overrides, remembered user choices,
   package-time paths, standard directories, and a native file/folder picker.
@@ -833,9 +830,12 @@ proof:
 6. Standardized the clean-install and panel Defaults behavior at 60 FPS / 1.0x.
 7. Added a native, persistent, fault-tolerant picker for both Zero Hour and base
    Generals assets, including marker-file, game-folder, and parent-folder input.
-8. Added bilingual attribution, engineering-log, and end-user setup documents.
+8. Added separate Chinese and English attribution, engineering-log, and end-user
+   setup documents.
 9. Switched public packaging to the icon already tracked by upstream; the local
    custom ICNS is ignored.
+10. Merged the eight categorized commits into the public fork's `main` branch
+    through PR #1.
 
 ### Follow-up after source publication
 
@@ -867,28 +867,22 @@ proof:
 - Convert the informal date-only code annotations to the project's required
   author/date form and preserve upstream attribution.
 
-## 15. Suggested commit series
+## 15. Published commit series
 
-A public history should not land as one 5,000-line commit. A reviewable order is:
+The source release was organized as eight focused commits instead of one large
+working-tree dump:
 
-1. `fix(filesystem): make asset discovery external-disk safe`
-2. `build(macos): make local app packaging reproducible`
-3. `fix(macos-hidpi): separate points, pixels, and render scale`
-4. `fix(macos-window): follow native fullscreen and window resize`
-5. `fix(macos-shutdown): recover stranded fullscreen spaces`
-6. `fix(timing): decouple rendering from fixed-step simulation`
-7. `fix(cinematics): make camera and video timing frame-rate independent`
-8. `feat(extras): add localized display and speed panel`
-9. `feat(trainer): add guarded single-player cash controls`
-10. `fix(fonts): improve CJK fallback, metrics, and tooltip sizing`
-11. `fix(input): restore keypad and SDL cursor overlays`
-12. `fix(rendering): repair scaled render-target effects`
-13. `fix(dxvk-macos): backport fixed-function color and pixel sizing`
-14. `docs(macos): publish setup, controls, validation, and limitations`
+1. `fix(filesystem): support portable asset roots`
+2. `fix(timing): decouple render and simulation rates`
+3. `fix(rendering): restore videos and scaled effects`
+4. `fix(macos): improve Retina windows and shutdown`
+5. `fix(fonts): improve CJK fallback and metrics`
+6. `feat(extras): add localized display controls`
+7. `build(macos): add portable local app packaging`
+8. `docs(macos): document personalized fork setup`
 
-Each commit should build independently where practical. Keep the trainer commit
-separable so maintainers can accept the platform and correctness fixes without
-taking a gameplay-altering feature.
+The complete review record remains available in
+[PR #1](https://github.com/Log1037/Generals-Mac-iOS-iPad/pull/1).
 
 ## 16. File-group inventory
 
@@ -942,10 +936,10 @@ taking a gameplay-altering feature.
 
 ## Closing status
 
-The local fork has moved beyond a launch-only port: it now contains a coherent
-macOS presentation layer, independent cadence control, a usable high-DPI window
-model, localized in-engine controls, packaging, and several renderer/input
-correctness fixes discovered through real play. The next phase is not more
-feature work. It is source hygiene: preserve the current state, remove private
-and machine-specific material, reconcile stale launcher behavior, split the
-changes into reviewable commits, and run the clean-build validation matrix.
+The fork has moved beyond a launch-only port: it now contains a coherent macOS
+presentation layer, independent cadence control, a usable high-DPI window model,
+localized in-engine controls, portable packaging, and renderer/input correctness
+fixes discovered through real play. Source cleanup, private-data separation,
+portable paths, and commit splitting are complete. The next phase is a clean
+Apple Silicon end-to-end build and broader regression coverage for Linux, iOS,
+base Generals, replay determinism, and network lockstep.
