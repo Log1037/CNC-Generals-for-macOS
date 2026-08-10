@@ -152,7 +152,7 @@ git merge thesuperhackers/main
 - **Annotate changes**: `// GeneralsX @keyword author DD/MM/YYYY Description`
 - **Keywords**: `@bugfix` / `@feature` / `@performance` / `@refactor` / `@tweak` / `@build`
 - **Attribution**: Add upstream PR references with author and GitHub URL
-- **English only**: All code, comments, documentation
+- **Language policy**: Code, comments, and identifiers stay in English; release-oriented documentation is maintained in paired Chinese and English editions
 - **No lazy code**: No empty stubs, empty catch blocks, or commented-out code
 
 ## GitHub PR/Issue Formatting

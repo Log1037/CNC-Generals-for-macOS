@@ -19,6 +19,38 @@ what. The original GeneralsX README lives on the `upstream-main` branch.
 **No game assets are included or distributed.** You need your own copy
 ([Steam](https://store.steampowered.com/app/2732960/), ~$5 on sale).
 
+## 关于这个二次修改版 / About this customized fork
+
+### 中文
+
+本仓库直接 fork 自
+[`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)，
+并完整保留其上游来源、GPLv3 许可证和社区移植谱系。
+
+这个分支来自个人的实际安装和游玩需要：根据自己的 Apple Silicon Mac、中文游戏资源、
+外接盘目录和操作习惯，把日常确实会用到的画面、速度、镜头、中文字体、窗口与单机辅助
+功能直接整合进引擎，同时修复在实际使用中遇到的 Retina 缩放、全屏退出、过场、视频、
+光照、输入和 App 打包问题。它不是原项目作者发布的官方更新；本分支新增问题应在本仓库反馈。
+
+- [macOS 二次修改中英对照工程日志](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.md)
+- [macOS 中文/English 上手指南](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.md)
+
+### English
+
+This repository is forked directly from
+[`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)
+and retains its upstream history, GPLv3 license, and full community-porting lineage.
+
+This branch is driven by the maintainer's real installation and play needs. It embeds the display,
+speed, camera, Chinese-font, window-management, and local single-player helper features used in the
+maintainer's own Apple Silicon, Chinese-asset, and external-disk setup. It also fixes Retina scaling,
+fullscreen exit, cinematic, video, lighting, input, and app-packaging problems encountered during
+normal use. This is not an official update from the upstream authors; fork-specific issues should be
+reported in [this fork's issue tracker](https://github.com/Log1037/Generals-Mac-iOS-iPad/issues).
+
+- [Bilingual macOS customization engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.md)
+- [Bilingual macOS quick-start guide](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.md)
+
 ## What this port actually involved
 
 "Porting" undersells how weird this journey was, so here's the honest shape of it.
@@ -80,7 +112,7 @@ export VULKAN_SDK=$HOME/VulkanSDK/<version>/macOS   # add to your shell profile
 Clone, build, get assets, play:
 
 ```sh
-git clone https://github.com/ammaarreshi/Generals-Mac-iOS-iPad.git GeneralsX
+git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
 cd GeneralsX
 ./scripts/build/macos/build-macos-zh.sh     # checks deps, configures, builds
 ./scripts/build/macos/deploy-macos-zh.sh    # creates ~/GeneralsX/GeneralsZH + run.sh

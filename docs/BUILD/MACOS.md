@@ -122,10 +122,55 @@ This script:
   - `libMoltenVK.dylib`
 - Writes the `MoltenVK_icd.json` ICD manifest
 - Generates a `run.sh` wrapper that sets `VK_ICD_FILENAMES` before launching
+- Rebuilds the double-clickable app bundle (skip with `GX_SKIP_APP_BUNDLE=1`)
 
 ---
 
-## Running
+## The app bundle
+
+Deploy already refreshes it, so a normal build/deploy cycle needs nothing extra.
+To build it on its own:
+
+```bash
+./scripts/build/macos/package-macos-zh-app.sh
+```
+
+This is the entry point a player double-clicks. It is deliberately separate from
+`bundle-macos-zh.sh`: that script builds a portable release bundle, while this one
+builds the local Chinese-named launcher with the selected user-supplied asset path
+baked in. Choose that path with `--game-dir`, `GX_GAME_DIRECTORY`, or
+`GX_RUNTIME_ROOT`; no developer-specific absolute path is stored in source.
+
+The bundle's `CFBundleExecutable` is `GeneralsXLauncher` (compiled from
+`packaging/macos/GeneralsXLauncher.m`), not the engine. The launcher has to be the
+entry point because it establishes everything the engine needs before `exec`:
+
+- `DYLD_LIBRARY_PATH` pointing at `Contents/Frameworks` — the engine `dlopen`s
+  `libdxvk_d3d8.dylib` by bare name, which dyld never resolves against `LC_RPATH`
+- `VK_ICD_FILENAMES` / `VK_DRIVER_FILES` for the bundled MoltenVK
+- `CNC_GENERALS_ZH_PATH` and the working directory, so loose `Data/INI` overrides resolve
+- `GX_RENDER_FPS` and `GX_LOGIC_FPS`, read from `Options.ini`
+- stdout/stderr redirected to `~/Library/Logs/GeneralsX/ZeroHour.log`
+
+It also preflights the asset root and shows a Chinese alert on failure rather than
+dying silently — useful because the assets live on a removable volume. Run that
+preflight without starting the game:
+
+```bash
+"将军：零点行动.app/Contents/MacOS/GeneralsXLauncher" --check
+```
+
+Signing is ad-hoc (`--sign -`), which is enough for local Gatekeeper. `spctl`
+will still report `rejected` because the bundle is not notarized; that is expected
+and does not prevent launching a locally built app.
+
+For a complete Chinese/English walkthrough covering Windows asset transfer,
+deployment, and app packaging, see
+[`docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.md`](../HOWTO/MACOS_LOCAL_FORK_QUICK_START.md).
+
+---
+
+## Running from the command line
 
 ```bash
 ./scripts/build/macos/run-macos-zh.sh -win
@@ -154,6 +199,44 @@ Common flags:
 
 ---
 
+## macOS window and cursor hotkeys
+
+| Keys | Effect |
+|------|--------|
+| `Ctrl+Cmd+F` | Toggle fullscreen (also the green zoom button) |
+| `Cmd+G` | Release the cursor to the desktop, or take it back |
+
+Both are macOS-only and neither is persisted: the launch window mode still comes from `-fullscreen`
+/ `-win` or `Windowed` in `Options.ini`.
+
+Fullscreen is macOS's own transition — the window is `SDL_WINDOW_RESIZABLE` and SDL3 uses native
+fullscreen Spaces — so the engine only reacts to it. On
+`SDL_EVENT_WINDOW_ENTER_FULLSCREEN` / `LEAVE_FULLSCREEN` it re-derives the render resolution for the
+new window size at the current `GXRenderScalePercent` and updates the engine's windowed flag. Without
+that the render resolution stayed at its windowed value while DXVK's swapchain grew to the panel, and
+the pillarbox stretched the difference.
+
+`Cmd+G` matters most in fullscreen, where SDL never posts `MOUSE_LEAVE` — there is nowhere to leave
+to — so before this the only way to free the grabbed cursor was to switch away from the game. It is
+recorded as a `CursorCaptureBlockReason`, not a bare `releaseCapture()`, so a focus or mode change
+does not silently take the cursor back. `Cmd` is not a modifier the game uses, and the key is consumed
+before the keyboard device sees it, so the retail key map is unaffected.
+
+While the cursor is released in fullscreen the macOS menu bar is reachable by moving to the top of the
+screen, and it hides again when the cursor is recaptured. This needs the window to be in
+*non-exclusive* fullscreen: SDL marks fullscreen exclusive whenever a fullscreen display mode is set,
+and the Cocoa backend then requests `NSApplicationPresentationHideMenuBar`, which is a hard hide that
+hovering cannot reveal. The window therefore clears its fullscreen mode before the transition, and
+`SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY` is toggled with the cursor state. The hint's `auto`
+value does not help here — it means visible only when fullscreen was entered from the title-bar button,
+and the engine can enter it programmatically at launch.
+
+The window's maximum size is set from the **full display bounds**, never the usable area. SDL passes a
+maximum to Cocoa as `-setContentMaxSize:`, and AppKit applies it to fullscreen content too, so a lower
+ceiling letterboxes the fullscreen picture. See Troubleshooting below.
+
+---
+
 ## DXVK macOS Source Model
 
 DXVK for macOS is consumed from the project fork as a **pinned commit** configured in
@@ -166,6 +249,22 @@ DXVK for macOS is consumed from the project fork as a **pinned commit** configur
 ---
 
 ## Troubleshooting
+
+### Black bars above and below the picture in fullscreen
+
+The window's maximum size is clamping the fullscreen drawable. Two log lines identify it:
+
+```
+INFO: window ceiling set to WxH points (display bounds)
+INFO: entered fullscreen: ... drawable WxH, window WxH points, max WxH
+```
+
+If `drawable` is short of the panel's pixel size while `max` is non-zero, the ceiling is the cause, and
+the first line says what set it. The ceiling must be `SDL_GetDisplayBounds`, not the usable bounds and
+not usable-minus-title-bar — SDL hands it to Cocoa as `-setContentMaxSize:`, which caps fullscreen
+content as well as the window's. Clearing the ceiling when fullscreen is entered does **not** fix it:
+`ENTER_FULLSCREEN` is posted after Cocoa has already sized the frame, and a native toggle gives no
+earlier hook.
 
 ### "Vulkan SDK not found"
 
