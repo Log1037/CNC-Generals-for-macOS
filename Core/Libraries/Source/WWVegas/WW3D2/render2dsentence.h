@@ -124,6 +124,8 @@ private:
 	bool							Create_Freetype_Font( const char *font_name );
 	void							Free_Freetype_Font( void );
 	const FontCharsClassCharDataStruct *	Store_Freetype_Char( WCHAR ch );
+	// GeneralsX @feature 10/08/2026 Locate_Font_FontConfig also reports which face of a
+	// collection (.ttc) matched, via FreetypeFaceIndex. See the .cpp for why face 0 is wrong.
 	const char *					Locate_Font_FontConfig( const char *font_name );
 #endif
 	
@@ -160,6 +162,10 @@ private:
 	FT_Library							FTLibrary;
 	FT_Face								FTFace;
 	StringClass							FreetypeFontPath;
+	// GeneralsX @bugfix 10/08/2026 Which face inside a font collection to load. Font
+	// collections do not put Regular first: macOS Songti.ttc face 0 is "Songti SC Black",
+	// and Regular is face 6. Hardcoding 0 rendered every CJK glyph in the heaviest weight.
+	int									FreetypeFaceIndex;
 #endif
 	
 	FontCharsClassCharDataStruct *					ASCIICharArray[256];
