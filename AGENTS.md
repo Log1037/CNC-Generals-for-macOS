@@ -152,7 +152,7 @@ git merge thesuperhackers/main
 - **Annotate changes**: `// GeneralsX @keyword author DD/MM/YYYY Description`
 - **Keywords**: `@bugfix` / `@feature` / `@performance` / `@refactor` / `@tweak` / `@build`
 - **Attribution**: Add upstream PR references with author and GitHub URL
-- **Language policy**: Code, comments, and identifiers stay in English; release-oriented documentation is maintained in paired Chinese and English editions
+- **Language policy**: Code, comments, and identifiers stay in English. Release-oriented documentation uses separate language files: the default `.md` is Chinese and the matching `.en.md` is English. Keep only a short language switcher in each file; do not mix both full texts on one page
 - **No lazy code**: No empty stubs, empty catch blocks, or commented-out code
 
 ## GitHub PR/Issue Formatting

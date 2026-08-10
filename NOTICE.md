@@ -1,45 +1,43 @@
-# 修改与来源声明 / Modification and Attribution Notice
+# 修改与来源声明
 
-## 中文
+[中文](NOTICE.md) | [English](NOTICE.en.md)
 
 本仓库是一个经过修改的 GPLv3 分支，不是 Electronic Arts、Westwood、EA Pacific 或任何上游社区项目发布的官方版本。
 
-直接上游项目：
+## 直接上游
 
 - [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)
-- 本分支基于上游提交 `c5c8c4d3e757033d9ab464f6bd6e15e91e0e742f` 开始整理。
+- 本次个人需求版从上游提交 `c5c8c4d3e757033d9ab464f6bd6e15e91e0e742f` 开始整理。
 
-更早的主要来源包括：
+直接上游的完整功能介绍、Apple 平台移植历程和原始说明请阅读其自己的 README。本仓库不复制那份 README，只说明本分支新增和修改的内容。
 
-- [Electronic Arts GPLv3 source release](https://github.com/electronicarts/CnC_Generals_Zero_Hour)
+## 更早的主要来源
+
+- [Electronic Arts GPLv3 源码发布](https://github.com/electronicarts/CnC_Generals_Zero_Hour)
 - [TheSuperHackers/GeneralsGameCode](https://github.com/TheSuperHackers/GeneralsGameCode)
 - [Fighter19/CnC_Generals_Zero_Hour](https://github.com/Fighter19/CnC_Generals_Zero_Hour)
 - [fbraz3/GeneralsX](https://github.com/fbraz3/GeneralsX)
 
-本分支在 2026 年根据维护者自己的 Apple Silicon macOS、中文游戏资源、外接盘安装和实际游玩需要进行了修改。新增内容主要包括：Retina 与窗口管理、渲染帧率和逻辑速度调节、游戏内设置面板、中文字体适配、视频与过场修复、渲染问题修复、输入处理以及本地 App 打包。
+## 本分支的修改范围
 
-本仓库不提供《命令与征服：将军》或《零点行动》的商业游戏资源。使用者必须自行拥有合法副本。游戏名称、剧情、美术、音频和其他商业资源的权利属于其各自权利人。
+本分支在 2026 年根据维护者自己的 Apple Silicon macOS、中文游戏资源、外接盘安装和实际游玩需要进行了修改。新增内容主要包括：
 
-源码继续按照仓库中的 [GPLv3 许可证及 EA 附加条款](LICENSE.md)发布。第三方组件各自适用其原有许可证。
+- Retina、HiDPI、窗口化和 macOS 原生全屏处理；
+- 独立的渲染帧率与游戏逻辑速度控制；
+- 游戏内画面、速度、镜头和本地单机设置面板；
+- 中文字体回退、字形、字号和界面可读性调整；
+- 视频、过场、光照、缩放特效和离屏渲染修复；
+- SDL 输入、鼠标捕获、菜单稳定性和安全退出修复；
+- 游戏资源路径识别、外接盘运行和本地 `.app` 打包。
 
-## English
+这不是直接上游作者发布的官方更新。本分支特有问题应提交到[本仓库的 Issues](https://github.com/Log1037/Generals-Mac-iOS-iPad/issues)。
 
-This repository is a modified GPLv3 fork. It is not an official release by Electronic Arts, Westwood, EA Pacific, or any upstream community project.
+## 游戏资源边界
 
-Direct upstream:
+本仓库不提供《命令与征服：将军》或《零点行动》的商业游戏资源。使用者必须自行拥有并提供合法副本。
 
-- [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)
-- The current customization was consolidated from upstream commit `c5c8c4d3e757033d9ab464f6bd6e15e91e0e742f`.
+游戏名称、剧情、美术、音频、地图、视频和其他商业资源的权利属于其各自权利人。不得把 `.big`、语音、视频、地图、私人字体或其他商业资源提交到本仓库。
 
-Earlier major sources include:
+## 许可证
 
-- [Electronic Arts GPLv3 source release](https://github.com/electronicarts/CnC_Generals_Zero_Hour)
-- [TheSuperHackers/GeneralsGameCode](https://github.com/TheSuperHackers/GeneralsGameCode)
-- [Fighter19/CnC_Generals_Zero_Hour](https://github.com/Fighter19/CnC_Generals_Zero_Hour)
-- [fbraz3/GeneralsX](https://github.com/fbraz3/GeneralsX)
-
-In 2026 this fork was modified around the maintainer's own Apple Silicon macOS, Chinese game-data, external-disk, and real play requirements. The added work primarily covers Retina and window management, independent render and simulation controls, an in-game settings panel, Chinese font handling, video and cinematic fixes, rendering corrections, input behavior, and local app packaging.
-
-This repository does not provide commercial assets from Command & Conquer: Generals or Zero Hour. Users must supply their own lawfully obtained copies. The game names, story, artwork, audio, and other commercial assets remain the property of their respective rights holders.
-
-Source remains available under the repository's [GPLv3 license and EA additional terms](LICENSE.md). Third-party components retain their respective licenses.
+源码继续按照仓库中的 [GPLv3 许可证及 EA 附加条款](LICENSE.md)发布。第三方组件继续适用其各自许可证。

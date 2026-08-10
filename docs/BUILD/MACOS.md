@@ -1,367 +1,265 @@
-# GeneralsX - macOS Build Instructions (Apple Silicon)
+# GeneralsX macOS 构建指南
 
-## Prerequisites
+[中文](MACOS.md) | [English](MACOS.en.md)
 
-### System Requirements
+本文面向需要从源码构建 `GeneralsXZH` 的开发者和高级用户。只想复制正版游戏资源并打包 App 的用户，也可以先阅读[上手指南](../HOWTO/MACOS_LOCAL_FORK_QUICK_START.md)。
 
-- **macOS 15 (Sequoia) or later** on Apple Silicon (M1/M2/M3/M4)
-- **Xcode Command Line Tools** 14+
-- ~10 GB free disk space (build artifacts + DXVK Meson build)
+## 系统要求
 
-### 1. Xcode Command Line Tools
+- Apple Silicon Mac；
+- macOS 13 或更新版本；
+- Xcode Command Line Tools；
+- 约 10 GB 可用空间；
+- 自行合法拥有的原版《将军》和《零点行动》资源。
+
+## 1. 安装构建工具
 
 ```bash
 xcode-select --install
+brew install cmake ninja meson python pkgconf ffmpeg glm vcpkg
+export VCPKG_ROOT="$(brew --prefix vcpkg)"
 ```
 
-### 2. Homebrew
+构建脚本会自动尝试以下 vcpkg 位置：
+
+- `$VCPKG_ROOT`；
+- 仓库内的 `vcpkg/`；
+- `~/vcpkg`；
+- 常见 Homebrew 和 `/opt/vcpkg` 位置。
+
+## 2. 安装 LunarG Vulkan SDK
+
+当前 `build-macos-zh.sh` 需要完整的 LunarG macOS Vulkan SDK，包括 `libvulkan.dylib` 和 `glslangValidator`。仅安装 Homebrew 的 Vulkan headers 不够。
+
+1. 打开 <https://vulkan.lunarg.com/sdk/home#mac>。
+2. 下载并安装 macOS SDK。
+3. 设置 SDK 路径：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+export VULKAN_SDK="$HOME/VulkanSDK/<version>/macOS"
 ```
 
-### 3. Build Tools
+检查：
 
 ```bash
-brew install cmake ninja meson python3 pkgconf ffmpeg glm
+test -f "$VULKAN_SDK/lib/libvulkan.dylib"
+test -f "$VULKAN_SDK/lib/libMoltenVK.dylib"
+test -x "$VULKAN_SDK/bin/glslangValidator"
 ```
 
-> **Note on `meson`**: The DXVK sub-project requires Meson >= 1.0. The Homebrew arm64
-> bottle is sufficient. CMake overrides the build arches via `CFLAGS/CXXFLAGS=-arch arm64`.
+构建脚本也会读取 `$VULKAN_SDK_ROOT`，并自动扫描 `~/VulkanSDK/*/macOS`。
 
-### 4. Vulkan SDK (REQUIRED — NOT from Homebrew)
+## 3. 准备游戏资源
 
-Download the **macOS Vulkan SDK** from LunarG. **Do not use the Homebrew `vulkan-headers` package**
-— it lacks the MoltenVK ICD JSON that routes Vulkan calls to Metal.
+推荐把原版和资料片分别放在：
 
-1. Go to <https://vulkan.lunarg.com/sdk/home#mac>
-2. Download the latest SDK installer (`.dmg`)
-3. Run the installer — it installs to `~/VulkanSDK/<version>/macOS/`
+```text
+${GX_RUNTIME_ROOT:-$HOME/GeneralsX}/
+├── Generals/
+│   └── INI.big
+└── GeneralsZH/
+    └── INIZH.big
+```
 
-After installation, verify:
+外接盘示例：
 
 ```bash
-ls ~/VulkanSDK/*/macOS/lib/libvulkan.dylib   # should list one file
-ls ~/VulkanSDK/*/macOS/lib/libMoltenVK.dylib # should list one file
+export GX_RUNTIME_ROOT="/Volumes/My Games/GeneralsX Runtime"
 ```
 
-### 5. Game Files
+资源必须来自用户自己合法拥有的 Windows 副本。本仓库不下载或分发商业资源。如何从 Windows 查找和复制两个完整目录，请看[上手指南](../HOWTO/MACOS_LOCAL_FORK_QUICK_START.md)。
 
-Copy your retail Command & Conquer: Generals Zero Hour installation to:
-
-```
-~/GeneralsX/GeneralsZH/
-```
-
-Legacy fallback during migration is still supported:
-
-```
-~/GeneralsX/GeneralsMD/
-```
-
-Required files from the retail install:
-
-- `generalszh.big`, `W3DZH.big`, `MapsZH.big` (and other `.big` archives)
-- `AudioZH.big` (even though audio is not yet functional)
-
----
-
-## Building
-
-### Clone the Repository
+## 4. 克隆与构建
 
 ```bash
-git clone https://github.com/fbraz3/GeneralsX.git
+git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
 cd GeneralsX
-```
 
-### Configure and Build
-
-```bash
 ./scripts/build/macos/build-macos-zh.sh
 ```
 
-This does:
+脚本会：
 
-1. Checks all prerequisites (cmake, ninja, meson, Vulkan SDK)
-2. Runs `cmake --preset macos-vulkan` (fetches pinned DXVK fork commit and builds via Meson)
-3. Builds `z_generals` target (Zero Hour executable)
-4. Prints the binary path on success
+1. 检查 CMake、Ninja、Meson、Python、vcpkg 和 Vulkan SDK；
+2. 使用 `macos-vulkan` preset 配置 CMake；
+3. 获取固定版本的 DXVK fork 并通过 Meson 构建；
+4. 构建 `z_generals` 目标；
+5. 把完整日志写入 `logs/build_zh_macos-vulkan.log`。
 
-**First run takes 5-10 minutes** because DXVK is fetched from git and compiled
-via Meson. Subsequent builds reuse the Meson cache and finish in under a minute.
+第一次构建需要下载和编译依赖，后续会复用缓存。
 
-> **`--build-only` flag**: If you have already configured (cmake cache exists),
-> skip configuration:
-> ```bash
-> ./scripts/build/macos/build-macos-zh.sh --build-only
-> ```
+已经配置过，只想增量构建时：
 
-### Manual cmake commands (equivalent)
+```bash
+./scripts/build/macos/build-macos-zh.sh --build-only
+```
+
+等价的手工命令：
 
 ```bash
 cmake --preset macos-vulkan
-cmake --build build/macos-vulkan --target z_generals -j$(sysctl -n hw.logicalcpu)
+cmake --build build/macos-vulkan --target z_generals \
+  -j"$(( ($(sysctl -n hw.logicalcpu) + 1) / 2 ))"
 ```
 
----
+引擎程序位于：
 
-## Deploying
+```text
+build/macos-vulkan/GeneralsMD/GeneralsXZH
+```
 
-After a successful build, deploy the binary and Vulkan runtime to the game directory:
+## 5. 部署运行时
 
 ```bash
+export GX_RUNTIME_ROOT="${GX_RUNTIME_ROOT:-$HOME/GeneralsX}"
 ./scripts/build/macos/deploy-macos-zh.sh
 ```
 
-This script:
+部署脚本会把引擎、DXVK、MoltenVK、Vulkan loader、SDL3、OpenAL、FFmpeg 相关运行库、GameSpy 兼容库、Fontconfig 配置和运行脚本放入运行目录。它不会删除或替换用户的商业资源。
 
-- Copies `build/macos-vulkan/GeneralsMD/GeneralsXZH` to `~/GeneralsX/GeneralsZH/` (or `~/GeneralsX/GeneralsMD/` when legacy assets are detected)
-- Detects the Vulkan SDK in `~/VulkanSDK/` and copies:
-  - `libvulkan.dylib`, `libvulkan.1.dylib`
-  - `libMoltenVK.dylib`
-- Writes the `MoltenVK_icd.json` ICD manifest
-- Generates a `run.sh` wrapper that sets `VK_ICD_FILENAMES` before launching
-- Rebuilds the double-clickable app bundle (skip with `GX_SKIP_APP_BUNDLE=1`)
-
----
-
-## The app bundle
-
-Deploy already refreshes it, so a normal build/deploy cycle needs nothing extra.
-To build it on its own:
+默认还会刷新本地 App。跳过 App 打包：
 
 ```bash
-./scripts/build/macos/package-macos-zh-app.sh
+GX_SKIP_APP_BUNDLE=1 ./scripts/build/macos/deploy-macos-zh.sh
 ```
 
-This is the entry point a player double-clicks. It is deliberately separate from
-`bundle-macos-zh.sh`: that script builds a portable release bundle, while this one
-builds the local Chinese-named launcher with the selected user-supplied asset path
-baked in. Choose that path with `--game-dir`, `GX_GAME_DIRECTORY`, or
-`GX_RUNTIME_ROOT`; no developer-specific absolute path is stored in source.
-
-The bundle's `CFBundleExecutable` is `GeneralsXLauncher` (compiled from
-`packaging/macos/GeneralsXLauncher.m`), not the engine. The launcher has to be the
-entry point because it establishes everything the engine needs before `exec`:
-
-- `DYLD_LIBRARY_PATH` pointing at `Contents/Frameworks` — the engine `dlopen`s
-  `libdxvk_d3d8.dylib` by bare name, which dyld never resolves against `LC_RPATH`
-- `VK_ICD_FILENAMES` / `VK_DRIVER_FILES` for the bundled MoltenVK
-- `CNC_GENERALS_ZH_PATH` and the working directory, so loose `Data/INI` overrides resolve
-- `GX_RENDER_FPS` and `GX_LOGIC_FPS`, read from `Options.ini`
-- stdout/stderr redirected to `~/Library/Logs/GeneralsX/ZeroHour.log`
-
-It also preflights the asset root and shows a Chinese alert on failure rather than
-dying silently — useful because the assets live on a removable volume. Run that
-preflight without starting the game:
-
-```bash
-"将军：零点行动.app/Contents/MacOS/GeneralsXLauncher" --check
-```
-
-Signing is ad-hoc (`--sign -`), which is enough for local Gatekeeper. `spctl`
-will still report `rejected` because the bundle is not notarized; that is expected
-and does not prevent launching a locally built app.
-
-For a complete Chinese/English walkthrough covering Windows asset transfer,
-deployment, and app packaging, see
-[`docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.md`](../HOWTO/MACOS_LOCAL_FORK_QUICK_START.md).
-
----
-
-## Running from the command line
+## 6. 从命令行运行
 
 ```bash
 ./scripts/build/macos/run-macos-zh.sh -win
 ```
 
-Or use the generated wrapper in the deploy directory:
+或者：
 
 ```bash
-~/GeneralsX/GeneralsZH/run.sh -win -noshellmap
+cd "$GX_RUNTIME_ROOT/GeneralsZH"
+./run.sh -win
 ```
 
-Legacy fallback path also works:
+常用参数：
+
+| 参数 | 作用 |
+|---|---|
+| `-win` | 窗口化运行，推荐用于排错 |
+| `-fullscreen` | 全屏运行 |
+| `-noshellmap` | 跳过动态主菜单背景 |
+| `-xres 1280 -yres 720` | 指定逻辑分辨率 |
+
+## 7. 打包本地 App
 
 ```bash
-~/GeneralsX/GeneralsMD/run.sh -win -noshellmap
+./scripts/build/macos/package-macos-zh-app.sh \
+  --game-dir "$GX_RUNTIME_ROOT/GeneralsZH" \
+  --generals-dir "$GX_RUNTIME_ROOT/Generals" \
+  --runtime "$GX_RUNTIME_ROOT/GeneralsZH" \
+  --output "$HOME/Applications/将军：零点行动.app"
 ```
 
-Common flags:
+`GeneralsXLauncher` 是 App 的真正入口。它负责：
 
-| Flag | Effect |
-|------|--------|
-| `-win` | Windowed mode (recommended for debugging) |
-| `-fullscreen` | Fullscreen mode |
-| `-noshellmap` | Skip the animated main menu shell map |
-| `-xres 1280 -yres 720` | Set resolution |
+- 识别《零点行动》和原版《将军》资源；
+- 设置引擎工作目录和资源环境变量；
+- 指向 App 内的 DXVK、Vulkan 和 MoltenVK；
+- 读取已保存的渲染帧率和游戏速度；
+- 把输出写入 `~/Library/Logs/GeneralsX/ZeroHour.log`；
+- 在资源或运行库缺失时显示可读错误，而不是静默退出。
 
----
+路径来源按以下优先级处理：
 
-## macOS window and cursor hotkeys
+1. 环境变量；
+2. 上次成功保存的位置；
+3. 打包时写入的位置；
+4. `$GX_RUNTIME_ROOT` 和标准目录；
+5. 原生文件选择窗口。
 
-| Keys | Effect |
-|------|--------|
-| `Ctrl+Cmd+F` | Toggle fullscreen (also the green zoom button) |
-| `Cmd+G` | Release the cursor to the desktop, or take it back |
+选择器接受标记文件、游戏目录或共同父目录，并支持 Finder 拖入和 `⇧⌘G` 手动输入。
 
-Both are macOS-only and neither is persisted: the launch window mode still comes from `-fullscreen`
-/ `-win` or `Windowed` in `Options.ini`.
-
-Fullscreen is macOS's own transition — the window is `SDL_WINDOW_RESIZABLE` and SDL3 uses native
-fullscreen Spaces — so the engine only reacts to it. On
-`SDL_EVENT_WINDOW_ENTER_FULLSCREEN` / `LEAVE_FULLSCREEN` it re-derives the render resolution for the
-new window size at the current `GXRenderScalePercent` and updates the engine's windowed flag. Without
-that the render resolution stayed at its windowed value while DXVK's swapchain grew to the panel, and
-the pillarbox stretched the difference.
-
-`Cmd+G` matters most in fullscreen, where SDL never posts `MOUSE_LEAVE` — there is nowhere to leave
-to — so before this the only way to free the grabbed cursor was to switch away from the game. It is
-recorded as a `CursorCaptureBlockReason`, not a bare `releaseCapture()`, so a focus or mode change
-does not silently take the cursor back. `Cmd` is not a modifier the game uses, and the key is consumed
-before the keyboard device sees it, so the retail key map is unaffected.
-
-While the cursor is released in fullscreen the macOS menu bar is reachable by moving to the top of the
-screen, and it hides again when the cursor is recaptured. This needs the window to be in
-*non-exclusive* fullscreen: SDL marks fullscreen exclusive whenever a fullscreen display mode is set,
-and the Cocoa backend then requests `NSApplicationPresentationHideMenuBar`, which is a hard hide that
-hovering cannot reveal. The window therefore clears its fullscreen mode before the transition, and
-`SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY` is toggled with the cursor state. The hint's `auto`
-value does not help here — it means visible only when fullscreen was entered from the title-bar button,
-and the engine can enter it programmatically at launch.
-
-The window's maximum size is set from the **full display bounds**, never the usable area. SDL passes a
-maximum to Cocoa as `-setContentMaxSize:`, and AppKit applies it to fullscreen content too, so a lower
-ceiling letterboxes the fullscreen picture. See Troubleshooting below.
-
----
-
-## DXVK macOS Source Model
-
-DXVK for macOS is consumed from the project fork as a **pinned commit** configured in
-`cmake/dx8.cmake` (`DXVK_REMOTE_REF`).
-
-- No local `PATCH_COMMAND` is executed in the current workflow.
-- macOS fixes are expected to exist in the fork commit itself.
-- For local DXVK development, use `-DSAGE_DXVK_USE_LOCAL_FORK=ON`.
-
----
-
-## Troubleshooting
-
-### Black bars above and below the picture in fullscreen
-
-The window's maximum size is clamping the fullscreen drawable. Two log lines identify it:
-
-```
-INFO: window ceiling set to WxH points (display bounds)
-INFO: entered fullscreen: ... drawable WxH, window WxH points, max WxH
-```
-
-If `drawable` is short of the panel's pixel size while `max` is non-zero, the ceiling is the cause, and
-the first line says what set it. The ceiling must be `SDL_GetDisplayBounds`, not the usable bounds and
-not usable-minus-title-bar — SDL hands it to Cocoa as `-setContentMaxSize:`, which caps fullscreen
-content as well as the window's. Clearing the ceiling when fullscreen is entered does **not** fix it:
-`ENTER_FULLSCREEN` is posted after Cocoa has already sized the frame, and a native toggle gives no
-earlier hook.
-
-### "Vulkan SDK not found"
-
-```
-ERROR: Vulkan SDK not found at ~/VulkanSDK/
-```
-
-Install from <https://vulkan.lunarg.com/sdk/home#mac>. The SDK must be in
-`~/VulkanSDK/<version>/macOS/lib/libvulkan.dylib`.
-
-### "meson: command not found"
+## 8. 验证 App
 
 ```bash
-brew install meson
+APP="$HOME/Applications/将军：零点行动.app"
+
+plutil -lint "$APP/Contents/Info.plist"
+codesign --verify --deep --strict "$APP"
+"$APP/Contents/MacOS/GeneralsXLauncher" --check
 ```
 
-### DXVK Meson build fails with linker error
+`--check` 不启动游戏。默认使用 ad-hoc 签名，没有 Apple 公证，因此 `spctl` 的 `rejected` 结果不等同于 `codesign` 验证失败。
 
-If you see `--version-script` linker errors, the DXVK source being built likely
-does not include the darwin linker guard fix in its commit history.
-Clean the DXVK build cache and reconfigure:
+## 9. macOS 窗口快捷键
+
+| 快捷键 | 功能 |
+|---|---|
+| `Ctrl+Cmd+F` | 切换 macOS 原生全屏 |
+| `Cmd+G` | 释放或重新捕获鼠标 |
+
+窗口模式仍由启动参数和 `Options.ini` 决定。这两个快捷键只改变当前运行状态，不写回启动模式。
+
+## 10. DXVK 源码模型
+
+macOS DXVK 默认使用 `cmake/dx8.cmake` 中固定的远程 fork 版本。普通构建不应直接修改 `build/_deps/`。
+
+需要开发本地 DXVK fork 时：
 
 ```bash
-rm -rf build/macos-vulkan/_deps/dxvk-src-fbraz3 build/macos-vulkan/_deps/dxvk-build-macos
+cmake --preset macos-vulkan -DSAGE_DXVK_USE_LOCAL_FORK=ON
+```
+
+## 11. 常见问题
+
+### 找不到 Vulkan SDK
+
+确认 `$VULKAN_SDK/lib/libvulkan.dylib` 和 `$VULKAN_SDK/bin/glslangValidator` 存在。不要只安装 Homebrew 的 Vulkan headers。
+
+### 找不到 vcpkg
+
+```bash
+brew install vcpkg
+export VCPKG_ROOT="$(brew --prefix vcpkg)"
+```
+
+### DXVK Meson 构建仍使用旧缓存
+
+```bash
+rm -rf build/macos-vulkan/_deps/dxvk-src-fbraz3 \
+       build/macos-vulkan/_deps/dxvk-build-macos
 cmake --preset macos-vulkan
 ```
 
-### `VK_ERROR_INCOMPATIBLE_DRIVER` in logs
+### 运行时提示 `VK_ERROR_INCOMPATIBLE_DRIVER`
 
-This is addressed by the portability-enumeration fix included in the pinned fork
-commit. If you see it:
+重新部署，确认运行目录中有正确的 `libMoltenVK.dylib` 和 ICD JSON，并检查 `VK_ICD_FILENAMES`。
 
-1. Ensure the Vulkan SDK is installed via LunarG installer (not Homebrew)
-2. Ensure `scripts/build/macos/deploy-macos-zh.sh` was run (MoltenVK ICD JSON must be present)
-3. Verify `VK_ICD_FILENAMES` points to the correct JSON in the runtime dir
+### App 找不到游戏资源
 
-### `VK_ERROR_FEATURE_NOT_PRESENT` — robustBufferAccess2 / nullDescriptor
+直接选择 `INIZH.big` 和 `INI.big`，或者按住 Option 打开 App 重新选择。不要只选择某个 `Data/` 子目录。
 
-```
-[mvk-error] VK_ERROR_FEATURE_NOT_PRESENT: vkCreateDevice(): Requested physical
-device feature specified by the 1st flag in VkPhysicalDeviceRobustness2FeaturesKHR
-is not available on this device.
-```
+### 全屏出现黑边或窗口尺寸异常
 
-This is addressed in the pinned fork commit. If you see this, the DXVK dylib in
-the game directory is stale or from a different DXVK source revision. Rebuild and
-redeploy:
+先以 `-win` 运行，确认资源和渲染正常；再检查日志中的 drawable、window 和 display bounds。Retina 环境下必须区分 AppKit 点尺寸和实际 drawable 像素。
 
-```bash
-./scripts/build/macos/build-macos-zh.sh --build-only
-./scripts/build/macos/deploy-macos-zh.sh
-```
+## 12. 当前验证边界
 
-### Game crashes at startup (SIGSEGV)
+已经验证：
 
-Run with verbose MoltenVK output:
+- `z_generals` 在本机完整构建；
+- 部署、运行和打包脚本通过语法检查；
+- 隔离 App 通过 plist、深度签名和启动器 `--check`；
+- 直接目录、共同父目录和标记文件三种路径输入可以被识别。
 
-```bash
-cd ~/GeneralsX/GeneralsZH
-VK_ICD_FILENAMES=./MoltenVK_icd.json MVK_CONFIG_LOG_LEVEL=4 ./GeneralsXZH -win
-```
+仍需补充：
 
-### "Feature not present" Vulkan validation error
+- 另一台干净 Apple Silicon Mac 的端到端构建；
+- Linux、iOS 和原版《将军》的跨平台回归；
+- 录像确定性和网络锁步检查。
 
-The pinned DXVK commit masks core features against what the physical device
-actually supports.
-If you still see this, MoltenVK may need an update. Re-running
-`scripts/build/macos/deploy-macos-zh.sh` after updating the Vulkan SDK copies the
-new `libMoltenVK.dylib` to the runtime dir.
+## 相关脚本
 
----
-
-## Current Status
-
-| Feature | Status |
-|---------|--------|
-| CMake configure | Working |
-| DXVK compile via Meson | Working (fork-pinned source model) |
-| GeneralsXZH binary | Builds successfully |
-| Vulkan device init | Working (MoltenVK -> Metal) |
-| 3D rendering | Under active testing |
-| Audio (OpenAL) | In progress (Phase 2) |
-| Video (FFmpeg/Bink replacement) | In progress (Phase 3 planning/spike pending) |
-
----
-
-## Related Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/build/macos/build-macos-zh.sh` | Configure + build `GeneralsXZH` |
-| `scripts/build/macos/deploy-macos-zh.sh` | Deploy binary + Vulkan runtime to game dir |
-| `scripts/build/macos/run-macos-zh.sh` | Launch with correct environment |
-| `cmake/dx8.cmake` | DXVK ExternalProject build (pinned fork commit) |
-| `cmake/dxvk-macos-patches.py` | Deprecated legacy helper (not used by current build flow) |
-| `CMakePresets.json` (`macos-vulkan`) | Build preset (arm64, MoltenVK, SDL3, OpenAL, ffmpeg) |
-
----
-
-*See the [Dev Blog](../../DEV_BLOG/) for detailed session-by-session technical notes.*
+| 文件 | 用途 |
+|---|---|
+| `scripts/build/macos/build-macos-zh.sh` | 配置并构建 `GeneralsXZH` |
+| `scripts/build/macos/deploy-macos-zh.sh` | 部署引擎和运行库 |
+| `scripts/build/macos/run-macos-zh.sh` | 使用正确环境运行游戏 |
+| `scripts/build/macos/package-macos-zh-app.sh` | 打包本地双击 App |
+| `packaging/macos/GeneralsXLauncher.m` | App 启动器 |
+| `cmake/dx8.cmake` | DXVK 获取与构建配置 |
