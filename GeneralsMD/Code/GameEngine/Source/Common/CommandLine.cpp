@@ -680,14 +680,8 @@ Int parsePreload( char *args[], int num )
 #endif
 
 
-#if defined(RTS_DEBUG)
-Int parseDisplayDebug(char *args[], int)
-{
-	TheWritableGlobalData->m_displayDebug = TRUE;
-
-	return 1;
-}
-
+// GeneralsX @tweak 26/07/2026 Moved out of the RTS_DEBUG block so it is available in Release
+// builds; see the paramsForEngineInit table entry for why.
 Int parseFile(char *args[], int num)
 {
 	if (num > 1)
@@ -698,6 +692,13 @@ Int parseFile(char *args[], int num)
 	return 2;
 }
 
+#if defined(RTS_DEBUG)
+Int parseDisplayDebug(char *args[], int)
+{
+	TheWritableGlobalData->m_displayDebug = TRUE;
+
+	return 1;
+}
 
 Int parsePreloadEverything( char *args[], int num )
 {
@@ -1184,6 +1185,12 @@ static CommandLineParam paramsForEngineInit[] =
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },
 
+	// GeneralsX @tweak 26/07/2026 Is now available in Release builds. Booting straight into a
+	// named map is the only way to reproduce campaign/cinematic behaviour repeatably, and the
+	// release build is the only configuration the macOS port ships, so gating this behind
+	// RTS_DEBUG left mission and cutscene issues untestable.
+	{ "-file", parseFile },
+
 #if defined(RTS_DEBUG)
 	{ "-noaudio", parseNoAudio },
 	{ "-map", parseMapName },
@@ -1274,7 +1281,6 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-jabber", parseJabber },
 	{ "-munkee", parseMunkee },
 	{ "-displayDebug", parseDisplayDebug },
-	{ "-file", parseFile },
 
 //	{ "-preload", parsePreload },
 
@@ -1408,6 +1414,9 @@ static void parseCommandLine(const CommandLineParam* params, int numParams)
 	}
 #endif
 	int argc = argv.size();
+
+	// GeneralsX @diag 26/07/2026 DEBUG_LOGGING is off in this configuration, so the arg dump
+	// below never ran and a silently-dropped option was indistinguishable from a bad value.
 
 	int arg = 1;
 

@@ -163,12 +163,17 @@ extern void DownloadMenuShutdown( WindowLayout *layout, void *userData );
 extern WindowMsgHandledType DownloadMenuSystem( GameWindow *window, UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2 );
 extern WindowMsgHandledType DownloadMenuInput( GameWindow *window, UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2 );
 
-// Extras Menu (SagePatch QoL) ----------------------------------------------------------------------------------
+// Extras Menu (render/simulation cadence panel) ---------------------------------------------------
 extern void ExtrasMenuInit( WindowLayout *layout, void *userData );
 extern void ExtrasMenuUpdate( WindowLayout *layout, void *userData );
 extern void ExtrasMenuShutdown( WindowLayout *layout, void *userData );
 extern WindowMsgHandledType ExtrasMenuSystem( GameWindow *window, UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2 );
 extern WindowMsgHandledType ExtrasMenuInput( GameWindow *window, UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2 );
+// GeneralsX @feature 26/07/2026 Owns its own layout instead of living on the shell stack, so it can
+// open over gameplay as well as over a menu without leaking into the other. See ToggleQuitMenu.
+extern void ToggleExtrasMenu( void );
+extern void CloseExtrasMenu( void );
+extern Bool IsExtrasMenuVisible( void );
 
 // Popup host Game Internet -----------------------------------------------------------------------------------
 extern void DifficultySelectInit( WindowLayout *layout, void *userData );
@@ -383,6 +388,7 @@ extern void destroyQuitMenu();
 extern Bool canOpenQuitMenu();
 extern void ToggleQuitMenu();
 extern void HideQuitMenu();
+extern void QuitMenuUpdate( WindowLayout *layout, void *userData );
 extern WindowMsgHandledType QuitMenuSystem( GameWindow *window, UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2 );
 
 // Message of the Day -----------------------------------------------------------------------------

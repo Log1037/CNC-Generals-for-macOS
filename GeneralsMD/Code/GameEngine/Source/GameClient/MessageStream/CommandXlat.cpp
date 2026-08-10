@@ -187,17 +187,24 @@ bool changeMaxRenderFps(FpsValueChange change)
 
 	TheFramePacer->setFramesPerSecondLimit(maxRenderFps);
 	TheWritableGlobalData->m_useFpsLimit = (maxRenderFps != RenderFpsPreset::UncappedFpsValue);
+	// GeneralsX @tweak 26/07/2026 Record it as the user's preference too. This is the value a map
+	// script's SET_FPS_LIMIT is floored against and the value ScriptEngine::reset() restores, so
+	// without this a hotkey change was silently undone by the next script that touched the limit.
+	TheWritableGlobalData->m_framesPerSecondLimit = maxRenderFps;
+
+	// GeneralsX @bugfix 26/07/2026 Changing the render rate no longer touches the logic rate.
+	// It used to pull the logic fps down to the render fps, because the simulation could not run
+	// more than one step per rendered frame. It can now, so lowering the render cap for
+	// performance no longer slows the game down.
+	const UnsignedInt logicFps = TheFramePacer->getLogicTimeScaleFps();
 
 	UnicodeString message;
-
-	if (TheWritableGlobalData->m_useFpsLimit)
-	{
-		message = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:SetMaxRenderFps", L"Max Render FPS is %u", maxRenderFps);
-	}
+	if (maxRenderFps == RenderFpsPreset::UncappedFpsValue)
+		message.format(L"Render: uncapped | Logic: %u FPS | Speed: %.1fx", logicFps,
+			(Real)logicFps / LOGICFRAMES_PER_SECONDS_REAL);
 	else
-	{
-		message = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:SetUncappedRenderFps", L"Max Render FPS is uncapped");
-	}
+		message.format(L"Render: %u FPS | Logic: %u FPS | Speed: %.1fx", maxRenderFps, logicFps,
+			(Real)logicFps / LOGICFRAMES_PER_SECONDS_REAL);
 
 	TheInGameUI->messageNoFormat(message);
 
@@ -209,55 +216,25 @@ bool changeLogicTimeScale(FpsValueChange change)
 	if (TheNetwork != nullptr)
 		return false;
 
-	const UnsignedInt maxRenderFps = TheFramePacer->getFramesPerSecondLimit();
-	UnsignedInt maxRenderRemainder = LogicTimeScaleFpsPreset::StepFpsValue;
-	maxRenderRemainder -= maxRenderFps % LogicTimeScaleFpsPreset::StepFpsValue;
-	maxRenderRemainder %= LogicTimeScaleFpsPreset::StepFpsValue;
-
 	UnsignedInt logicTimeScaleFps = TheFramePacer->getLogicTimeScaleFps();
-	// Set the value to the max render fps value plus a bit when time scale is
-	// disabled. This ensures that the time scale does not re-enable with a
-	// 'surprise' value.
-	if (!TheFramePacer->isLogicTimeScaleEnabled())
-	{
-		logicTimeScaleFps = maxRenderFps + maxRenderRemainder;
-	}
-	// Ceil the value at the max render fps value plus a bit so that the next fps
-	// value decrease would undercut the max render fps at the correct step value.
-	// Example: render fps 72 -> logic value ceiled to 75 -> decreased to 70.
-	logicTimeScaleFps = min(logicTimeScaleFps, maxRenderFps + maxRenderRemainder);
 	logicTimeScaleFps = LogicTimeScaleFpsPreset::changeFpsValue(logicTimeScaleFps, change);
+	logicTimeScaleFps = clamp<UnsignedInt>(LogicTimeScaleFpsPreset::MinFpsValue,
+		logicTimeScaleFps, 180);
 
-	// Set value before potentially disabling it.
-	if (TheFramePacer->isLogicTimeScaleEnabled())
-	{
-		TheFramePacer->setLogicTimeScaleFps(logicTimeScaleFps);
-	}
+	// GeneralsX @bugfix 26/07/2026 Raising the logic rate no longer forces the render rate up
+	// with it; the two cadences are independent now.
+	const UnsignedInt maxRenderFps = TheFramePacer->getFramesPerSecondLimit();
 
-	TheFramePacer->enableLogicTimeScale(logicTimeScaleFps < maxRenderFps);
-
-	// Set value after potentially enabling it.
-	if (TheFramePacer->isLogicTimeScaleEnabled())
-	{
-		TheFramePacer->setLogicTimeScaleFps(logicTimeScaleFps);
-	}
-
-	logicTimeScaleFps = TheFramePacer->getLogicTimeScaleFps();
-	const UnsignedInt actualLogicTimeScaleFps = TheFramePacer->getActualLogicTimeScaleFps();
-	const Real actualLogicTimeScaleRatio = TheFramePacer->getActualLogicTimeScaleRatio();
+	TheFramePacer->setLogicTimeScaleFps(logicTimeScaleFps);
+	TheFramePacer->enableLogicTimeScale(TRUE);
 
 	UnicodeString message;
-
-	if (TheFramePacer->isLogicTimeScaleEnabled())
-	{
-		message = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:SetLogicTimeScaleFps", L"Logic Time Scale FPS is %u (actual %u, ratio %.02f)",
-			logicTimeScaleFps, actualLogicTimeScaleFps, actualLogicTimeScaleRatio);
-	}
+	if (maxRenderFps == RenderFpsPreset::UncappedFpsValue)
+		message.format(L"Render: uncapped | Logic: %u FPS | Speed: %.1fx", logicTimeScaleFps,
+			(Real)logicTimeScaleFps / LOGICFRAMES_PER_SECONDS_REAL);
 	else
-	{
-		message = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:SetUncappedLogicTimeScaleFps", L"Logic Time Scale FPS is uncapped (actual %u, ratio %.02f)",
-			actualLogicTimeScaleFps, actualLogicTimeScaleRatio);
-	}
+		message.format(L"Render: %u FPS | Logic: %u FPS | Speed: %.1fx", maxRenderFps, logicTimeScaleFps,
+			(Real)logicTimeScaleFps / LOGICFRAMES_PER_SECONDS_REAL);
 
 	TheInGameUI->messageNoFormat(message);
 
@@ -266,6 +243,7 @@ bool changeLogicTimeScale(FpsValueChange change)
 
 
 static Bool isSystemMessage( const GameMessage *msg );
+static Bool isPresentationMessage( const GameMessage *msg );
 
 enum{ DROPPED_MAX_PARTICLE_COUNT = 1000};
 
@@ -2476,6 +2454,7 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 	GameMessageDisposition disp = KEEP_MESSAGE;
 	// We want to always be able to get to the options menu even during no input times and a clear game data message should always go through
 	if (t != GameMessage::MSG_META_OPTIONS && t != GameMessage::MSG_CLEAR_GAME_DATA &&
+			!isPresentationMessage(msg) &&
 			!TheInGameUI->getInputEnabled() && !isSystemMessage(msg))
 	{
 		return DESTROY_MESSAGE;
@@ -3289,6 +3268,15 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 			{
 				disp = DESTROY_MESSAGE;
 			}
+			break;
+		}
+
+		//-----------------------------------------------------------------------------------------
+		// GeneralsX @feature 26/07/2026 Open the cadence/extras panel.
+		case GameMessage::MSG_META_TOGGLE_EXTRAS_MENU:
+		{
+			ToggleExtrasMenu();
+			disp = DESTROY_MESSAGE;
 			break;
 		}
 
@@ -5539,6 +5527,33 @@ static Bool isSystemMessage( const GameMessage *msg )
 		case GameMessage::MSG_SET_REPLAY_CAMERA:
 		case GameMessage::MSG_FRAME_TICK:
 		case GameMessage::MSG_META_DEMO_INSTANT_QUIT:
+			return TRUE;
+	}
+	return FALSE;
+}
+
+//-------------------------------------------------------------------------------------------------
+/** GeneralsX @bugfix 26/07/2026 Presentation-only commands survive the no-input gate.
+	* TheInGameUI disables input for the whole duration of a scripted cinematic, and the gate above
+	* threw away every message that was not the options menu. That also killed the render rate and
+	* game speed hotkeys, which is precisely when a player wants them: a cutscene running too fast
+	* or too slow is the thing they are trying to correct. None of these touch the simulation --
+	* they change the render cadence, the logic cadence, or open a settings panel -- so letting them
+	* through cannot desync a replay or a network match. Gameplay commands stay blocked. */
+//-------------------------------------------------------------------------------------------------
+static Bool isPresentationMessage( const GameMessage *msg )
+{
+	if (!msg) {
+		return false;
+	}
+
+	switch (msg->getType())
+	{
+		case GameMessage::MSG_META_TOGGLE_EXTRAS_MENU:
+		case GameMessage::MSG_META_INCREASE_MAX_RENDER_FPS:
+		case GameMessage::MSG_META_DECREASE_MAX_RENDER_FPS:
+		case GameMessage::MSG_META_INCREASE_LOGIC_TIME_SCALE:
+		case GameMessage::MSG_META_DECREASE_LOGIC_TIME_SCALE:
 			return TRUE;
 	}
 	return FALSE;

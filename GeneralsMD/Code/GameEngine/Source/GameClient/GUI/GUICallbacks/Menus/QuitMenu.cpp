@@ -43,6 +43,7 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/GadgetPushButton.h"
+#include "GameClient/GadgetStaticText.h"
 #include "GameClient/GameText.h"
 #include "GameClient/MessageBox.h"
 #include "GameClient/Shell.h"
@@ -72,6 +73,7 @@ static GameWindow *buttonRestartWin	= nullptr;
 static GameWindow *buttonSaveLoadWin = nullptr;
 static GameWindow *buttonOptionsWin = nullptr;
 static GameWindow *buttonExitWin = nullptr;
+static GameWindow *labelStatusWin = nullptr;
 
 static NameKeyType buttonExit = NAMEKEY_INVALID;
 static NameKeyType buttonRestart = NAMEKEY_INVALID;
@@ -91,6 +93,8 @@ static void initGadgetsFullQuit()
 	buttonSaveLoadWin = TheWindowManager->winGetWindowFromId( nullptr, buttonSaveLoad );
 	buttonOptionsWin = TheWindowManager->winGetWindowFromId( nullptr, buttonOptions );
 	buttonExitWin = TheWindowManager->winGetWindowFromId( nullptr, buttonExit );
+	labelStatusWin = TheWindowManager->winGetWindowFromId( nullptr,
+		TheNameKeyGenerator->nameToKey( "QuitMenu.wnd:LabelStatus" ) );
 }
 
 static void initGadgetsNoSaveQuit()
@@ -105,10 +109,43 @@ static void initGadgetsNoSaveQuit()
 	buttonOptionsWin = TheWindowManager->winGetWindowFromId( nullptr, buttonOptions );
 	buttonSaveLoadWin = nullptr;
 	buttonExitWin = TheWindowManager->winGetWindowFromId( nullptr, buttonExit );
+	labelStatusWin = TheWindowManager->winGetWindowFromId( nullptr,
+		TheNameKeyGenerator->nameToKey( "QuitNoSave.wnd:LabelStatus" ) );
 
 }
 
 // PUBLIC FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
+
+//-------------------------------------------------------------------------------------------------
+/** Refresh the always-visible FPS/game speed/cash status readout in the quit menu */
+//-------------------------------------------------------------------------------------------------
+void QuitMenuUpdate( WindowLayout *layout, void *userData )
+{
+	if( !labelStatusWin || !TheFramePacer )
+		return;
+
+	UnsignedInt maxRenderFps = TheFramePacer->getFramesPerSecondLimit();
+	UnsignedInt logicFps = TheFramePacer->getLogicTimeScaleFps();
+	Real speed = (Real)logicFps / LOGICFRAMES_PER_SECONDS_REAL;
+
+	UnicodeString text;
+	if( maxRenderFps == RenderFpsPreset::UncappedFpsValue )
+		text.format( L"Render: uncapped | Logic: %u FPS | Speed: %.1fx  (Ctrl+[ / Ctrl+] , Shift+Ctrl+[ / Shift+Ctrl+])",
+			logicFps, speed );
+	else
+		text.format( L"Render: %u FPS | Logic: %u FPS | Speed: %.1fx  (Ctrl+[ / Ctrl+] , Shift+Ctrl+[ / Shift+Ctrl+])",
+			maxRenderFps, logicFps, speed );
+
+	if( ThePlayerList && ThePlayerList->getLocalPlayer() && ThePlayerList->getLocalPlayer()->getMoney() )
+	{
+		UnicodeString cashText;
+		cashText.format( L"\nCash: %u  (Alt+N to add cash)",
+			ThePlayerList->getLocalPlayer()->getMoney()->countMoney() );
+		text.concat( cashText );
+	}
+
+	GadgetStaticTextSetText( labelStatusWin, text );
+}
 
 void destroyQuitMenu()
 {

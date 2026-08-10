@@ -32,6 +32,9 @@
 
 #include "Common/RandomValue.h"
 #include "GameClient/Shell.h"
+#include "GameClient/Drawable.h"
+#include "GameClient/GameClient.h"
+#include "GameClient/View.h"
 #include "GameClient/WindowLayout.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GameWindowTransitions.h"
@@ -77,6 +80,7 @@ void Shell::construct()
 	m_pendingPushName.set( "" );
 	m_isShellActive = TRUE;
 	m_shellMapOn = FALSE;
+	m_shellMapRefreshTime = 0;
 	m_background = nullptr;
 	m_clearBackground = FALSE;
 	m_animateWindowManager = NEW AnimateWindowManager;
@@ -178,6 +182,7 @@ void Shell::reset()
 void Shell::update()
 {
 	static Int lastUpdate = timeGetTime();
+	static Int lastShellMapHealthLog = 0;
 	static const Int shellUpdateDelay = 30;  // try to update 30 frames a second
 	Int now = timeGetTime();
 
@@ -187,6 +192,20 @@ void Shell::update()
 	//
 	if( now - lastUpdate >= ((1000.0f / shellUpdateDelay ) - 1) )
 	{
+		// MoltenVK can leave the 3D shell presenting a stale black image after
+		// a focus-driven swapchain rebuild even though the scene still renders.
+		// Recreate the shell game after the swapchain has had a short grace period.
+		if (m_shellMapRefreshTime != 0 && (Int)(now - m_shellMapRefreshTime) >= 0)
+		{
+			m_shellMapRefreshTime = 0;
+			if (m_shellMapOn && m_isShellActive && TheGameLogic &&
+				TheGameLogic->isInGame() && TheGameLogic->getGameMode() == GAME_SHELL)
+			{
+				fprintf(stderr, "INFO: GX refreshing shell map after window focus restore\n");
+				showShellMap(FALSE);
+				showShellMap(TRUE);
+			}
+		}
 
 		// run the updates for every window layout on the stack
 		for( Int i = m_screenCount - 1; i >= 0; i-- )
@@ -210,11 +229,72 @@ void Shell::update()
 
 		m_schemeManager->update();
 
+#if defined(__APPLE__)
+		// The shell map can finish loading while the menu still presents a black
+		// background.  Record the actual scene and camera state so we can
+		// distinguish an empty map, a hidden fallback window, and a bad camera.
+		if (m_shellMapOn && TheGameLogic && now - lastShellMapHealthLog >= 2000)
+		{
+			UnsignedInt drawableCount = 0;
+			if (TheGameClient)
+			{
+				for (Drawable *draw = TheGameClient->getDrawableList(); draw; draw = draw->getNextDrawable())
+				{
+					++drawableCount;
+				}
+			}
+
+			Coord3D cameraTarget = { 0.0f, 0.0f, 0.0f };
+			Coord3D cameraPosition = { 0.0f, 0.0f, 0.0f };
+			Coord3D cameraDirection = { 0.0f, 0.0f, 0.0f };
+			Real cameraAngle = 0.0f;
+			Real cameraPitch = 0.0f;
+			Real cameraZoom = 0.0f;
+			if (TheTacticalView)
+			{
+				cameraTarget = TheTacticalView->getPosition();
+				cameraPosition = TheTacticalView->get3DCameraPosition();
+				cameraDirection = TheTacticalView->get3DCameraDirection();
+				cameraAngle = TheTacticalView->getAngle();
+				cameraPitch = TheTacticalView->getPitch();
+				cameraZoom = TheTacticalView->getZoom();
+			}
+
+			fprintf(stderr,
+				"INFO: GX shell health mode=%d loading=%d objects=%u drawables=%u rendered=%u fallback_bg=%d "
+				"target=(%.2f,%.2f,%.2f) camera=(%.2f,%.2f,%.2f) dir=(%.3f,%.3f,%.3f) "
+				"angle=%.3f pitch=%.3f zoom=%.3f\n",
+				(int)TheGameLogic->getGameMode(),
+				TheGameLogic->isLoadingMap() ? 1 : 0,
+				TheGameLogic->getObjectCount(),
+				drawableCount,
+				TheGameClient ? TheGameClient->getRenderedObjectCount() : 0,
+				m_background ? 1 : 0,
+				cameraTarget.x, cameraTarget.y, cameraTarget.z,
+				cameraPosition.x, cameraPosition.y, cameraPosition.z,
+				cameraDirection.x, cameraDirection.y, cameraDirection.z,
+				cameraAngle, cameraPitch, cameraZoom);
+			lastShellMapHealthLog = now;
+		}
+#endif
+
 		// mark last time we ran the updates
 		lastUpdate = now;
 
 	}
 
+}
+
+//-------------------------------------------------------------------------------------------------
+void Shell::queueShellMapRefresh()
+{
+#if defined(__APPLE__)
+	if (m_shellMapOn && m_isShellActive)
+	{
+		m_shellMapRefreshTime = timeGetTime() + 250;
+		fprintf(stderr, "INFO: GX queued shell map refresh after focus restore\n");
+	}
+#endif
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -541,8 +621,17 @@ void Shell::showShellMap(Bool useShellMap )
 	}
 	if(useShellMap && TheGlobalData->m_shellMapOn)
 	{
-		// we're already in a shell game, return
-		if(TheGameLogic->isInGame() && TheGameLogic->getGameMode() == GAME_SHELL)
+		fprintf(stderr,
+			"INFO: GX shell map request use=1 local_on=%d in_game=%d mode=%d shell_active=%d\n",
+			m_shellMapOn ? 1 : 0,
+			TheGameLogic->isInGame() ? 1 : 0,
+			(int)TheGameLogic->getGameMode(),
+			m_isShellActive ? 1 : 0);
+
+		// Only trust GAME_SHELL when the Shell itself still owns a live shell-map
+		// session. Entering a real match explicitly clears m_shellMapOn below; if
+		// the game mode later remains stale, tear it down and rebuild the map.
+		if(TheGameLogic->isInGame() && TheGameLogic->getGameMode() == GAME_SHELL && m_shellMapOn)
 		{
 			return;
 		}
@@ -556,6 +645,7 @@ void Shell::showShellMap(Bool useShellMap )
 		GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
 		msg->appendIntegerArgument(GAME_SHELL);
 		m_shellMapOn = TRUE;
+		fprintf(stderr, "INFO: GX shell map rebuild queued map=%s\n", TheGlobalData->m_shellMapName.str());
 	}
 	else
 	{
@@ -595,6 +685,10 @@ void Shell::hideShell()
 {
 	// If we have the 3d background running, mark it to close
 	m_clearBackground = TRUE;
+	// A non-shell game is about to take ownership of GameLogic. Do not let a
+	// later stale GAME_SHELL value convince showShellMap() that the old 3D
+	// background survived the reset.
+	m_shellMapOn = FALSE;
 
 	DEBUG_LOG(("Shell:hideShell() - %s", (top())?top()->getFilename().str():"no top screen"));
 
