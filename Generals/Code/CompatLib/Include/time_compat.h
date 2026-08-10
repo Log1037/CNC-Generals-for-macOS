@@ -41,6 +41,11 @@ DWORD GetTickCount(void);
 #endif
 #endif
 
+// GeneralsX monotonic wall clock in milliseconds, unaffected by pausing, game speed or the
+// system clock being changed. Prefer this over timeGetTime() in new code: it is the same clock
+// but 64 bit, so it does not wrap after 49 days.
+uint64_t GeneralsXGetRealTimeMilliseconds(void);
+
 void Sleep(DWORD ms);
 
 void GetLocalTime(SYSTEMTIME* st);

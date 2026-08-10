@@ -18,6 +18,7 @@
 #include "PreRTS.h"
 
 #include "Common/FramePacer.h"
+#include "time_compat.h"
 
 #include "GameClient/View.h"
 
@@ -41,6 +42,7 @@ FramePacer::FramePacer()
 	m_maxFPS = BaseFps;
 	m_logicTimeScaleFPS = LOGICFRAMES_PER_SECOND;
 	m_updateTime = 1.0f / (Real)BaseFps; // initialized to something to avoid division by zero on first use
+	m_logicStepsThisFrame = 1;
 	m_enableFpsLimit = FALSE;
 	m_enableLogicTimeScale = FALSE;
 	m_isTimeFrozen = FALSE;
@@ -89,9 +91,14 @@ Bool FramePacer::isActualFramesPerSecondLimitEnabled() const
 {
 	Bool allowFpsLimit = true;
 
-	if (TheTacticalView != nullptr)
+	if (TheScriptEngine != nullptr)
 	{
-		allowFpsLimit &= TheTacticalView->getTimeMultiplier()<=1 && !TheScriptEngine->isTimeFast();
+		// GeneralsX @bugfix 26/07/2026 A scripted time multiplier no longer uncaps the render rate.
+		// It is applied to the logic cadence instead (see getTimeMultiplier), so the render limit
+		// can stay where the player put it and the fast-forwarded section stays smooth. The debug
+		// fast forward still runs the render loop flat out, because that one exists specifically to
+		// get through a mission as fast as the machine allows.
+		allowFpsLimit &= !TheScriptEngine->isTimeFast();
 	}
 
 	if (TheGameLogic != nullptr)
@@ -171,6 +178,16 @@ Bool FramePacer::isLogicTimeScaleEnabled() const
 	return m_enableLogicTimeScale;
 }
 
+void FramePacer::setLogicStepsThisFrame( Int steps )
+{
+	m_logicStepsThisFrame = max<Int>(0, steps);
+}
+
+Int FramePacer::getLogicStepsThisFrame() const
+{
+	return m_logicStepsThisFrame;
+}
+
 Int FramePacer::getActualLogicTimeScaleFps(LogicTimeQueryFlags flags) const
 {
 	if (m_isTimeFrozen && (flags & IgnoreFrozenTime) == 0)
@@ -190,11 +207,37 @@ Int FramePacer::getActualLogicTimeScaleFps(LogicTimeQueryFlags flags) const
 
 	if (isLogicTimeScaleEnabled())
 	{
-		return getLogicTimeScaleFps();
+		return getLogicTimeScaleFps() * getTimeMultiplier();
 	}
 
 	// Returns uncapped value to align with the render update as per the original game behavior.
 	return RenderFpsPreset::UncappedFpsValue;
+}
+
+Int FramePacer::getTimeMultiplier() const
+{
+	// GeneralsX @bugfix 26/07/2026 The scripted time multiplier now multiplies the logic cadence.
+	//
+	// SET_TIME_MULTIPLIER used to be implemented in W3DDisplay::draw: it uncapped the render frame
+	// rate and then drew only 1 of every N frames, relying on "logic runs once per rendered frame"
+	// to make the simulation N times faster while the screen still refreshed at a normal rate. The
+	// simulation is driven by a fixed step accumulator now, so uncapping the render rate no longer
+	// speeds anything up -- that implementation would just throw away 2 of every 3 frames and leave
+	// the game running at 1x. Multiplying the logic cadence here does what the script asked for and
+	// leaves the render rate alone, which also means the fast-forwarded section stays smooth
+	// instead of dropping to a third of the display rate.
+	if (TheNetwork != nullptr)
+	{
+		// Never desync a network match over a client side script.
+		return 1;
+	}
+
+	if (TheTacticalView == nullptr)
+	{
+		return 1;
+	}
+
+	return max<Int>(1, TheTacticalView->getTimeMultiplier());
 }
 
 Real FramePacer::getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags) const
@@ -204,9 +247,33 @@ Real FramePacer::getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags) const
 
 Real FramePacer::getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags) const
 {
-	// TheSuperHackers @info Clamps ratio to min 1, because the logic
-	// frame rate is currently capped by the render frame rate.
-	return min(1.0f, (Real)getActualLogicTimeScaleFps(flags) / getUpdateFps());
+	// GeneralsX @bugfix 26/07/2026 No longer clamped to 1.
+	//
+	// This ratio answers "how much logic time passes during one render frame", and every client
+	// side animation multiplies its per-frame step by it. Upstream clamps it to 1 because the main
+	// loop used to run at most one logic step per render frame, so logic could never outpace the
+	// render loop. The macOS port runs a proper fixed step accumulator (see
+	// FramePacer::getLogicStepsThisFrame and GameEngine::canUpdateRegularGameLogic), so at a 20 fps
+	// render cap with a 30 Hz simulation the correct answer is 1.5, not 1. Clamping made client
+	// animations run slower than the units they are attached to during scripted cinematics.
+	//
+	// Still bounded by MaxRatio so a render stall cannot hand animations an enormous time step;
+	// the logic step loop applies the same bound to its iteration count.
+	const Real MaxRatio = 8.0f;
+
+	const Int logicFps = getActualLogicTimeScaleFps(flags);
+	if (logicFps <= 0)
+	{
+		return 0.0f;
+	}
+
+	if (!isLogicTimeScaleEnabled() && TheNetwork == nullptr)
+	{
+		// Logic is bound to the render update, exactly one logic step per render frame.
+		return 1.0f;
+	}
+
+	return min(MaxRatio, (Real)logicFps / getUpdateFps());
 }
 
 Real FramePacer::getLogicTimeStepSeconds(LogicTimeQueryFlags flags) const

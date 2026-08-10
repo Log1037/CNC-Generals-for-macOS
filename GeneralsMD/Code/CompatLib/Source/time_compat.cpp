@@ -9,30 +9,46 @@
 #include <mach/mach_time.h>
 #endif
 
-DWORD timeGetTime(void)
+namespace
 {
-  // Boost could be used but is slow
+uint64_t getRealTimeNanoseconds()
+{
 #ifdef __APPLE__
-  // macOS: Use mach_absolute_time() for uptime
-  static mach_timebase_info_data_t tb = { 0, 0 };
-  if (tb.denom == 0) {
-    mach_timebase_info(&tb);
-  }
-  uint64_t elapsed = mach_absolute_time();
-  uint64_t nanoseconds = elapsed * tb.numer / tb.denom;
-  DWORD diff = (DWORD)(nanoseconds / 1000000);
+  static mach_timebase_info_data_t timebase = { 0, 0 };
+  if (timebase.denom == 0)
+    mach_timebase_info(&timebase);
+  const uint64_t elapsed = mach_absolute_time();
+  return elapsed * timebase.numer / timebase.denom;
 #elif defined(__linux__)
-  // Linux: CLOCK_BOOTTIME is Linux-specific (system uptime)
   struct timespec ts;
   clock_gettime(CLOCK_BOOTTIME, &ts);
-  DWORD diff = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + ts.tv_nsec;
 #else
-  // Other POSIX: Use CLOCK_MONOTONIC (fallback for BSD, etc.)
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  DWORD diff = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + ts.tv_nsec;
 #endif
-  return diff;
+}
+
+}
+
+uint64_t GeneralsXGetRealTimeMilliseconds(void)
+{
+  return getRealTimeNanoseconds() / 1000000ULL;
+}
+
+// GeneralsX @bugfix 26/07/2026 timeGetTime() is real time again.
+//
+// This used to return a scaled "game clock" so that a speed control could stretch the legacy Win32
+// millisecond timers. That was the wrong lever. timeGetTime() is read by hundreds of unrelated call
+// sites -- FFmpeg video presentation, menu fades, network timeouts, profiling -- and every one of
+// them means wall-clock milliseconds. Scaling it made in-engine video play at the wrong rate and
+// desync from its audio, and silently skewed every real-time gate in the engine. Simulation speed
+// belongs to the logic step cadence (FramePacer::setLogicTimeScaleFps), which changes how many
+// fixed-size logic steps run per second without lying to anybody about what time it is.
+DWORD timeGetTime(void)
+{
+  return static_cast<DWORD>(GeneralsXGetRealTimeMilliseconds());
 }
 
 DWORD GetTickCount(void)

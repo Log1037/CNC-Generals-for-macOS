@@ -56,24 +56,39 @@ public:
 	Bool isTimeFrozen() const;
 	Bool isGameHalted() const;
 
-	void setLogicTimeScaleFps( Int fps ); ///< Set the logic time scale fps and therefore scale the simulation time. Is capped by the max render fps and does not apply to network matches.
+	void setLogicTimeScaleFps( Int fps ); ///< Set the logic time scale fps and therefore scale the simulation time. Does not apply to network matches.
 	Int  getLogicTimeScaleFps() const; ///< Get the raw logic time scale fps value.
 	void enableLogicTimeScale( Bool enable ); ///< Enable or disable the logic time scale setup. If disabled, the simulation time scale is bound to the render frame time or network update time.
 	Bool isLogicTimeScaleEnabled() const; ///< Check whether the logic time scale setup is enabled.
-	Int  getActualLogicTimeScaleFps(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale fps, depending on the max render fps, network state and enabled state.
+	Int  getActualLogicTimeScaleFps(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale fps, depending on the network state and enabled state.
+	Int  getTimeMultiplier() const; ///< Get the scripted fast forward multiplier applied to the logic cadence. 1 unless a script asked for more.
 	Real getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale ratio, depending on the max render fps, network state and enabled state.
-	Real getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale over render fps ratio, used to scale down steps in render updates to match logic updates.
+	Real getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale over render fps ratio, used to scale steps in render updates to match logic updates.
 	Real getLogicTimeStepSeconds(LogicTimeQueryFlags flags = 0) const; ///< Get the logic time step in seconds
 	Real getLogicTimeStepMilliseconds(LogicTimeQueryFlags flags = 0) const; ///< Get the logic time step in milliseconds
+
+	// GeneralsX @feature 26/07/2026 Logic steps per render frame.
+	//
+	// The simulation cadence used to be silently capped by the render frame rate, because the
+	// engine ran at most one logic step per render frame. That made the render frame rate an
+	// input to gameplay speed: a map script calling SET_FPS_LIMIT 20 dragged the simulation down
+	// to 20 Hz and its cinematic played at 2/3 speed. Reporting a step count instead lets the
+	// main loop run as many fixed-size logic steps as real time has accrued, so simulation speed
+	// depends only on the logic cadence. Steps stay discrete and ordered, so replay and CRC
+	// determinism are unaffected -- only wall-clock pacing changes.
+	void setLogicStepsThisFrame( Int steps ); ///< Record how many logic steps the main loop ran for the current render frame.
+	Int  getLogicStepsThisFrame() const; ///< Get the logic step count of the last render frame. At least 1 while the simulation is running.
 
 protected:
 
 	FrameRateLimit m_frameRateLimit;
 
 	Int m_maxFPS; ///< Maximum frames per second for rendering
-	Int m_logicTimeScaleFPS; ///< Maximum frames per second for logic time scale
+	Int m_logicTimeScaleFPS; ///< Frames per second for the logic time scale
 
 	Real m_updateTime; ///< Last update delta time in seconds
+
+	Int m_logicStepsThisFrame; ///< Logic steps the main loop ran for the current render frame
 
 	Bool m_enableFpsLimit;
 	Bool m_enableLogicTimeScale;

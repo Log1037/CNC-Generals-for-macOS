@@ -7122,17 +7122,32 @@ void ScriptActions::executeAction( ScriptAction *pAction )
 			doSetStoppingDistance(pAction->getParameter(0)->getString(), pAction->getParameter(1)->getReal());
 			return;
 		case ScriptAction::SET_FPS_LIMIT:
-			if (!pAction->getParameter(0)->getInt())
+		{
+			// GeneralsX @tweak 26/07/2026 A map script can lower the render rate but not below the
+			// user's own preference.
+			//
+			// Campaign maps use this to buy headroom on 2003 hardware -- the first USA mission asks
+			// for 20 fps during its opening cinematic. Two things have changed since. The render
+			// rate no longer drives simulation speed (the logic step accumulator does), so this is
+			// now purely a rendering hint and honouring it costs smoothness for nothing. And the
+			// hardware it was protecting no longer exists, so a modern machine ends up rendering
+			// a scripted cutscene at 20 fps for no reason at all. Floor it at whatever the player
+			// configured; a script asking for less is still free to ask for more.
+			const Int requested = pAction->getParameter(0)->getInt();
+			const Int userLimit = TheGlobalData->m_framesPerSecondLimit;
+
+			if (requested <= 0)
 			{
-				TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
+				TheFramePacer->setFramesPerSecondLimit(userLimit);
 			}
 			else
 			{
-				TheFramePacer->setFramesPerSecondLimit(pAction->getParameter(0)->getInt());
+				TheFramePacer->setFramesPerSecondLimit(max(requested, userLimit));
 			}
 			// Setting the fps limit doesn't do much good if we don't use it.  jba.
 			TheWritableGlobalData->m_useFpsLimit = true;
 			return;
+		}
 
 		case ScriptAction::DISABLE_SPECIAL_POWER_DISPLAY:
 			doDisableSpecialPowerDisplay();
