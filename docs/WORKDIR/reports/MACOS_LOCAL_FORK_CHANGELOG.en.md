@@ -40,7 +40,7 @@ of Generals and Zero Hour is still required.
 As of the 2026-08-10 source publication:
 
 - The customization was split into eight focused commits.
-- [PR #1](https://github.com/Log1037/Generals-Mac-iOS-iPad/pull/1) merged those
+- [PR #1](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/pull/1) merged those
   commits into the public fork's `main` branch.
 - Commercial assets, saves, private fonts, build products, machine-local archives,
   and the maintainer's custom ICNS remain excluded.
@@ -882,7 +882,7 @@ working-tree dump:
 8. `docs(macos): document personalized fork setup`
 
 The complete review record remains available in
-[PR #1](https://github.com/Log1037/Generals-Mac-iOS-iPad/pull/1).
+[PR #1](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/pull/1).
 
 ## 16. File-group inventory
 

@@ -24,7 +24,7 @@
 我们的重点不是改变《零点行动》的玩法，而是让这套原生移植在现代 Retina Mac 上真正达到日常可玩的状态：画面清晰、窗口行为正常、速度可控、中文可读、过场不丢、应用包可复现，并且退出时不把 macOS 留在异常的黑色全屏空间里。
 
 当前用户反馈是整体体验已经很好。源码已经按功能拆分为八个提交，通过
-[PR #1](https://github.com/Log1037/Generals-Mac-iOS-iPad/pull/1) 合入公开 fork 的
+[PR #1](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/pull/1) 合入公开 fork 的
 `main` 分支。另一台干净 Apple Silicon Mac 上的完整安装验证仍是后续工作，因此目前发布的是可审阅的源码版本，而不是附带商业资源或预编译游戏本体的二进制发行包。
 
 ## 二、公开内容与本机内容的边界
@@ -508,7 +508,7 @@ GX_CJK_SERIF_FONT="PingFang SC" ./run.sh
 7. `build(macos): add portable local app packaging`
 8. `docs(macos): document personalized fork setup`
 
-完整审阅记录保留在 [PR #1](https://github.com/Log1037/Generals-Mac-iOS-iPad/pull/1)。
+完整审阅记录保留在 [PR #1](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/pull/1)。
 
 ## 十九、当前结论
 
