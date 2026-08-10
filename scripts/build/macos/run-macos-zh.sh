@@ -8,8 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build/macos-vulkan"
 # GeneralsX @feature BenderAI 01/04/2026 Prefer GeneralsZH for user-facing Zero Hour runtime path with GeneralsMD fallback.
-PREFERRED_GAME_DIR="${HOME}/GeneralsX/GeneralsZH"
-LEGACY_GAME_DIR="${HOME}/GeneralsX/GeneralsMD"
+GX_RUNTIME_ROOT="${GX_RUNTIME_ROOT:-${HOME}/GeneralsX}"
+PREFERRED_GAME_DIR="${GX_RUNTIME_ROOT}/GeneralsZH"
+LEGACY_GAME_DIR="${GX_RUNTIME_ROOT}/GeneralsMD"
 GAME_DIR="${PREFERRED_GAME_DIR}"
 if [[ -d "${PREFERRED_GAME_DIR}" && -n "$(compgen -G "${PREFERRED_GAME_DIR}/*.big" 2>/dev/null)" ]]; then
     GAME_DIR="${PREFERRED_GAME_DIR}"
@@ -78,6 +79,20 @@ if [[ -f "${GAME_DIR}/fontconfig/fonts.conf" ]]; then
 else
     echo "WARNING: ${GAME_DIR}/fontconfig/fonts.conf not found; text rendering may fail."
 fi
+
+# GeneralsX @feature 10/08/2026 Honour the install's Chinese font choice, same as the deployed
+# run.sh. This wrapper sets up the environment independently, so a setting added to only one of
+# the two launchers would appear to work or not depending on how the game was started.
+if [[ -z "${GX_CJK_SERIF_FONT:-}" && -f "${GAME_DIR}/gx-font.conf" ]]; then
+    _gx_font="$(grep -v '^[[:space:]]*#' "${GAME_DIR}/gx-font.conf" | grep -v '^[[:space:]]*$' | head -n 1)"
+    _gx_font="${_gx_font#"${_gx_font%%[![:space:]]*}"}"
+    _gx_font="${_gx_font%"${_gx_font##*[![:space:]]}"}"
+    if [[ -n "${_gx_font}" ]]; then
+        export GX_CJK_SERIF_FONT="${_gx_font}"
+    fi
+    unset _gx_font
+fi
+echo "   Chinese font: ${GX_CJK_SERIF_FONT:-宋体 from fonts/ (or host fallback)}"
 
 # GeneralsX @tweak BenderAI 13/03/2026 Optional shader-cache reset for terrain debugging.
 # Use GX_CLEAR_DXVK_SHADER_CACHE=1 to force fresh shader compilation.
