@@ -78,6 +78,13 @@ target_sources(z_generals PRIVATE
     $<$<NOT:$<BOOL:${WIN32}>>:LinuxStubs.cpp>
 )
 
+# GeneralsX @build 05/08/2026 The exit display kick lives in its own translation unit on purpose:
+# CoreGraphics.h drags in MacTypes.h, whose "typedef UInt8 Byte" collides with the engine's
+# "typedef char Byte" (BaseTypeCore.h). Keeping the two apart is what lets both compile.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(z_generals PRIVATE MacDisplayKick.cpp)
+endif()
+
 # RC files optional for MinGW builds
 # Icon: LoadIcon() handles missing resource gracefully (uses default system icon)
 # Manifest: DPI awareness metadata (nice to have but not essential)

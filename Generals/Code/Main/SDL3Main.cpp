@@ -303,9 +303,41 @@ int main(int argc, char* argv[])
 			// Create SDL3 window with Vulkan support
 			fprintf(stderr, "INFO: Creating SDL3 Vulkan window...\n");
 			Uint32 windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;  // Start hidden, show after D3D init
+			int initialWindowW = 1024;
+			int initialWindowH = 768;
+#if defined(__APPLE__)
+			// GeneralsX @bugfix: request a Retina (HiDPI) backing drawable on macOS so the
+			// game renders at full display sharpness. The internal engine/UI resolution,
+			// resolution list, and font scaling stay in logical points (see
+			// SDL3_GetNativeDisplaySize/SDL3_GetWindowSizeInPixels in W3DDisplay.cpp) --
+			// only the backing drawable and DXVK's swapchain are sized in physical pixels,
+			// via this flag and SDL_GetWindowSizeInPixels respectively.
+			windowFlags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+
+			// Enter fullscreen before DXVK creates its first backbuffer. Switching the
+			// Cocoa window from 1024x768 to fullscreen later resizes the swapchain, but
+			// leaves Generals' D3D8 backbuffer and mouse transform at the bootstrap size.
+			bool requestedFullscreen = false;
+			for (int i = 1; i < __argc; ++i) {
+				if (strcmp(__argv[i], "-fullscreen") == 0) {
+					requestedFullscreen = true;
+					break;
+				}
+			}
+			if (requestedFullscreen) {
+				const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+				if (mode && mode->w > 0 && mode->h > 0) {
+					initialWindowW = mode->w;
+					initialWindowH = mode->h;
+				}
+				windowFlags |= SDL_WINDOW_FULLSCREEN;
+				fprintf(stderr, "INFO: macOS pre-D3D fullscreen window set to %dx%d\n",
+					initialWindowW, initialWindowH);
+			}
+#endif
 			TheSDL3Window = SDL_CreateWindow(
 				"Command & Conquer Generals",
-				1024, 768,  // Default resolution
+				initialWindowW, initialWindowH,
 				windowFlags
 			);
 
@@ -318,6 +350,55 @@ int main(int argc, char* argv[])
 			// Store window handle globally (cast SDL_Window* to HWND for compatibility)
 			ApplicationHWnd = (HWND)TheSDL3Window;
 			fprintf(stderr, "INFO: SDL3 window created successfully\n");
+
+#if defined(__APPLE__)
+			// Match the internal render size to the screen's logical size. Generals' UI,
+			// viewport coordinates, resolution list, and font scaling all operate in
+			// logical points -- the Retina backing drawable requested above (and DXVK's
+			// swapchain) are sized in physical pixels separately via SDL_GetWindowSizeInPixels.
+			// Explicit user -xres/-yres options still take precedence.
+			{
+				bool userSetRes = false;
+				for (int i = 1; i < __argc; ++i) {
+					if (strcmp(__argv[i], "-xres") == 0 || strcmp(__argv[i], "-yres") == 0) {
+						userSetRes = true;
+						break;
+					}
+				}
+				int winW = 0, winH = 0;
+				SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
+				const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(displayId);
+				if (mode) {
+					winW = mode->w;
+					winH = mode->h;
+				}
+				if (!userSetRes && winW > 0 && winH > 0 && winW > winH) {
+					static char xresVal[16], yresVal[16];
+					static char xresFlag[] = "-xres";
+					static char yresFlag[] = "-yres";
+					const int yres = winH;
+					int xres = winW;
+					xres &= ~1;  // keep it even
+					snprintf(xresVal, sizeof(xresVal), "%d", xres);
+					snprintf(yresVal, sizeof(yresVal), "%d", yres);
+
+					static char* newArgv[64];
+					int n = 0;
+					for (int i = 0; i < __argc && n < 59; ++i) {
+						newArgv[n++] = __argv[i];
+					}
+					newArgv[n++] = xresFlag;
+					newArgv[n++] = xresVal;
+					newArgv[n++] = yresFlag;
+					newArgv[n++] = yresVal;
+					newArgv[n] = nullptr;
+					__argv = newArgv;
+					__argc = n;
+					fprintf(stderr, "INFO: Apple logical internal resolution set to %sx%s (target %dx%d)\n",
+					        xresVal, yresVal, winW, winH);
+				}
+			}
+#endif
 		}
 
 		// Call cross-platform game entry point

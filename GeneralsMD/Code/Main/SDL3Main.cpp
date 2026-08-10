@@ -34,22 +34,33 @@
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/stat.h>
 #if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 // On iOS, SDL renames main() to SDL_main and provides its own UIApplicationMain
 // bootstrap; the app lifecycle (suspend/resume, window) is owned by SDL.
 #include <SDL3/SDL_main.h>
-#include <cerrno>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <filesystem>
 #include <string>
 #endif
+#include <algorithm>
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <unistd.h>   // _exit()
 #include <glob.h>     // glob() for Vulkan ICD discovery
+#include <pthread.h>  // shutdown watchdog thread
+#include <signal.h>   // kill() from the shutdown watchdog
+#include <ctime>      // nanosleep() in the shutdown watchdog
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+// Defined in MacDisplayKick.cpp, which cannot be included from here: <CoreGraphics/CoreGraphics.h>
+// pulls in <MacTypes.h>, whose "typedef UInt8 Byte" is a hard conflict with the engine's own
+// "typedef char Byte" in BaseTypeCore.h. Declaring the one symbol keeps the two apart.
+extern "C" void GXKickDisplayConfiguration(void);
+extern "C" bool GXGetPanelNativePixelSize(int* outWidth, int* outHeight);
+#endif
 
 // USER INCLUDES (match WinMain.cpp pattern)
 #include "Lib/BaseType.h"
@@ -101,6 +112,293 @@ const Char *g_strFile = "data/Generals.str";     ///< STR file path
 
 // Extern declarations (from GameMain.cpp)
 extern Int GameMain();
+
+#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+// GeneralsX @bugfix 02/08/2026 A hung shutdown must never be able to hold the screen.
+//
+// Observed once for real: the engine logged "exited main loop", "GameMain() returned with code 0"
+// and "Exiting with code 0", so the process reached _exit() -- yet the fullscreen picture stayed on
+// screen for three and a half minutes until the machine was restarted by hand. Force Quit could not
+// offer the game because by then there was no game process left to offer, and Cmd-Tab was equally
+// useless: what remained in front was the fullscreen Space, not a window belonging to anything.
+//
+// The mechanism is not what it first looks like, and the first two attempts at a fix both missed it.
+// SDL_DestroyWindow does not unwind a fullscreen *desktop* window's Space: SDL_video.c bails out of
+// SDL_UpdateFullscreenMode early when is_destroying is set, deliberately, to avoid a double
+// transition. So the Space is never left mid-transition -- it is never asked to leave at all, and
+// what actually happens is that the only window inside it is closed and the process exits. The Space
+// survives both, with nothing left inside it and nobody left owning it.
+//
+// That makes the leaving of fullscreen the engine's job, early, while its window is still key and the
+// app still frontmost -- see SDL3GameEngine::leaveFullscreenForShutdown. Two things here back it up:
+// the guard in the teardown below, which would rather exit with an intact fullscreen window than
+// close one inside a live Space, and this watchdog, which bounds the whole teardown so a wedge in
+// DXVK's worker joins, MoltenVK/Metal or the memory manager cannot leave the process sitting mid-exit
+// owning the screen.
+//
+// Known limit: the watchdog only covers userspace deadlock. A thread stuck in an uninterruptible
+// kernel wait cannot be signalled away.
+//
+// Update 05/08/2026: fullscreen is no longer a macOS Space by default -- see the
+// SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES block before SDL_InitSubSystem. A borderless window cannot be
+// orphaned the way a Space can, which removes the failure mode this watchdog was fighting rather than
+// only bounding it. The watchdog stays because it also covers a wedge in DXVK, MoltenVK/Metal or the
+// memory manager, and because GX_MAC_FULLSCREEN_SPACES=1 can still put a Space back.
+static void* GXShutdownWatchdogThread(void* arg)
+{
+	const double seconds = *static_cast<double*>(arg);
+	delete static_cast<double*>(arg);
+
+	struct timespec remaining;
+	remaining.tv_sec = static_cast<time_t>(seconds);
+	remaining.tv_nsec = static_cast<long>((seconds - static_cast<double>(remaining.tv_sec)) * 1e9);
+	while (nanosleep(&remaining, &remaining) != 0 && errno == EINTR) {
+		// Restart the wait with whatever is left; a signal must not shorten the grace period.
+	}
+
+	fprintf(stderr, "FATAL: shutdown watchdog expired after %.1fs -- killing the process so the "
+		"display cannot stay captured\n", seconds);
+	fflush(stderr);
+	kill(getpid(), SIGKILL);
+	return nullptr;
+}
+
+/// Start a detached thread that SIGKILLs this process if teardown has not finished in time.
+/// Set GX_EXIT_WATCHDOG_SECONDS=0 to disable (useful when debugging shutdown under lldb).
+static void GXArmShutdownWatchdog(void)
+{
+	double seconds = 10.0;
+	if (const char* override = getenv("GX_EXIT_WATCHDOG_SECONDS")) {
+		char* end = nullptr;
+		const double parsed = strtod(override, &end);
+		if (end != override && parsed >= 0.0) {
+			seconds = parsed;
+		}
+	}
+	if (seconds <= 0.0) {
+		fprintf(stderr, "INFO: shutdown watchdog disabled by GX_EXIT_WATCHDOG_SECONDS\n");
+		return;
+	}
+
+	pthread_attr_t attr;
+	if (pthread_attr_init(&attr) != 0) {
+		return;
+	}
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+	pthread_t thread;
+	double* payload = new double(seconds);
+	if (pthread_create(&thread, &attr, GXShutdownWatchdogThread, payload) != 0) {
+		delete payload;
+		fprintf(stderr, "WARNING: could not start the shutdown watchdog\n");
+	}
+	else {
+		fprintf(stderr, "INFO: shutdown watchdog armed (%.1fs)\n", seconds);
+	}
+	pthread_attr_destroy(&attr);
+}
+
+#endif // !TARGET_OS_IPHONE
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+// GeneralsX @feature 26/07/2026 Render scale as a percentage of the display's physical pixel
+// size; see the GXRenderScalePercent read in ConfigureMacOSAppRuntime.
+static Int s_macRenderScalePercent = 100;
+
+static Int ReadMacOSIntegerOption(const char* path, const char* requestedKey,
+	Int fallback, Int minimum, Int maximum)
+{
+	FILE* file = fopen(path, "r");
+	if (file == nullptr) {
+		return fallback;
+	}
+
+	char line[2048] = { 0 };
+	while (fgets(line, sizeof(line), file) != nullptr) {
+		char* equals = strchr(line, '=');
+		if (equals == nullptr) {
+			continue;
+		}
+		*equals = '\0';
+
+		char* key = line;
+		while (*key != '\0' && std::isspace(static_cast<unsigned char>(*key))) {
+			++key;
+		}
+		char* keyEnd = key + strlen(key);
+		while (keyEnd > key && std::isspace(static_cast<unsigned char>(keyEnd[-1]))) {
+			*--keyEnd = '\0';
+		}
+		if (strcasecmp(key, requestedKey) != 0) {
+			continue;
+		}
+
+		char* valueText = equals + 1;
+		while (*valueText != '\0' && std::isspace(static_cast<unsigned char>(*valueText))) {
+			++valueText;
+		}
+		const Int value = atoi(valueText);
+		fclose(file);
+		return std::max(minimum, std::min(maximum, value));
+	}
+
+	fclose(file);
+	return fallback;
+}
+
+static void ConfigureMacOSAppRuntime(int& argc, char**& argv)
+{
+	const char* home = getenv("HOME");
+	if (home != nullptr) {
+		char logDirectory[4096] = { 0 };
+		char logPath[4096] = { 0 };
+		snprintf(logDirectory, sizeof(logDirectory), "%s/Library/Logs/GeneralsX", home);
+		mkdir(logDirectory, 0755);
+		snprintf(logPath, sizeof(logPath), "%s/ZeroHour.log", logDirectory);
+		const int logFd = open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		if (logFd >= 0) {
+			dup2(logFd, STDOUT_FILENO);
+			dup2(logFd, STDERR_FILENO);
+			close(logFd);
+		}
+	}
+
+	// GeneralsX @bugfix 10/08/2026 Derive optional standalone asset paths from GX_RUNTIME_ROOT.
+	// Public builds must not contain a developer's external-volume path. The Cocoa launcher and
+	// run.sh normally set CNC_* explicitly; this remains a portable fallback for direct execution.
+	const char* runtimeRoot = getenv("GX_RUNTIME_ROOT");
+	if (runtimeRoot != nullptr && runtimeRoot[0] != '\0') {
+		static char zeroHourAssetsBuffer[4096] = { 0 };
+		static char generalsAssetsBuffer[4096] = { 0 };
+		snprintf(zeroHourAssetsBuffer, sizeof(zeroHourAssetsBuffer), "%s/GeneralsZH", runtimeRoot);
+		snprintf(generalsAssetsBuffer, sizeof(generalsAssetsBuffer), "%s/Generals", runtimeRoot);
+		if (getenv("CNC_GENERALS_ZH_PATH") == nullptr) {
+			setenv("CNC_GENERALS_ZH_PATH", zeroHourAssetsBuffer, 1);
+		}
+		if (getenv("CNC_GENERALS_PATH") == nullptr) {
+			setenv("CNC_GENERALS_PATH", generalsAssetsBuffer, 1);
+		}
+		if (getenv("CNC_GENERALS_INSTALLPATH") == nullptr) {
+			setenv("CNC_GENERALS_INSTALLPATH", generalsAssetsBuffer, 1);
+		}
+	}
+
+	const char* zeroHourAssets = getenv("CNC_GENERALS_ZH_PATH");
+	if (zeroHourAssets != nullptr && chdir(zeroHourAssets) != 0) {
+		fprintf(stderr, "WARNING: macOS app could not enter asset directory '%s': %s\n",
+			zeroHourAssets, strerror(errno));
+	}
+
+	char contentsDirectory[4096] = { 0 };
+	if (argc > 0 && argv[0] != nullptr) {
+		strncpy(contentsDirectory, argv[0], sizeof(contentsDirectory) - 1);
+		char* slash = strrchr(contentsDirectory, '/');
+		if (slash != nullptr) {
+			*slash = '\0'; // Contents/MacOS
+			slash = strrchr(contentsDirectory, '/');
+			if (slash != nullptr) {
+				*slash = '\0'; // Contents
+			}
+		}
+	}
+	if (contentsDirectory[0] != '\0') {
+		char icdPath[4096] = { 0 };
+		snprintf(icdPath, sizeof(icdPath), "%s/Frameworks/MoltenVK_icd.json", contentsDirectory);
+		if (getenv("VK_ICD_FILENAMES") == nullptr) {
+			setenv("VK_ICD_FILENAMES", icdPath, 1);
+		}
+		if (getenv("VK_DRIVER_FILES") == nullptr) {
+			setenv("VK_DRIVER_FILES", icdPath, 1);
+		}
+	}
+
+	if (zeroHourAssets != nullptr) {
+		char fontConfig[4096] = { 0 };
+		char fontPath[4096] = { 0 };
+		snprintf(fontConfig, sizeof(fontConfig), "%s/fontconfig/fonts.conf", zeroHourAssets);
+		snprintf(fontPath, sizeof(fontPath), "%s/fontconfig", zeroHourAssets);
+		if (getenv("FONTCONFIG_FILE") == nullptr) {
+			setenv("FONTCONFIG_FILE", fontConfig, 1);
+		}
+		if (getenv("FONTCONFIG_PATH") == nullptr) {
+			setenv("FONTCONFIG_PATH", fontPath, 1);
+		}
+	}
+
+	setenv("DXVK_WSI_DRIVER", "SDL3", 0);
+	setenv("DXVK_HUD", "0", 0);
+
+	Int renderFps = 60;
+	Int speedTenths = 10;
+	if (home != nullptr) {
+		char optionsPath[4096] = { 0 };
+		snprintf(optionsPath, sizeof(optionsPath),
+			"%s/Library/Application Support/GeneralsX/GeneralsZH/Options.ini", home);
+		renderFps = ReadMacOSIntegerOption(optionsPath, "GXRenderFPS", 60, 30, 240);
+		speedTenths = ReadMacOSIntegerOption(optionsPath, "GXGameSpeedTenths", 10, 5, 60);
+		// GeneralsX @feature 26/07/2026 Percentage of the display's physical pixel size to render
+		// at. 100 is native HiDPI. Rendering ~5 Mpix through DXVK's emulated fixed-function
+		// pipeline is far more expensive than the 1024x768 this engine shipped for, so this exists
+		// as a sharpness/performance dial: values below 100 render smaller and let the existing
+		// pillarbox blit upscale, which is strictly better than being forced back to a blurry
+		// point-sized backbuffer. Read here so it applies before the first D3D device is made.
+		s_macRenderScalePercent = ReadMacOSIntegerOption(optionsPath, "GXRenderScalePercent", 100, 50, 100);
+
+		// GeneralsX @feature 27/07/2026 Hand the percentage to W3DDisplay as well. The windowed
+		// sizing rule needs it to convert the render resolution into window points, and the in-game
+		// clarity switch reads it back, so both paths have to share one value rather than each
+		// keeping its own copy of a preference that can change at runtime.
+		{
+			extern void GeneralsX_SetRenderScalePercent(int percent);
+			GeneralsX_SetRenderScalePercent(s_macRenderScalePercent);
+		}
+	}
+	const Int logicFps = (speedTenths * 30 + 5) / 10;
+	// GeneralsX @bugfix 26/07/2026 The render cap is no longer raised to meet the logic rate. The
+	// fixed-step accumulator in the main loop runs as many logic steps per rendered frame as the
+	// ratio requires, so a fast simulation does not need a matching frame rate, and forcing one
+	// silently discarded whatever cap the user had asked for.
+	if (getenv("GX_RENDER_FPS") == nullptr) {
+		char value[16] = { 0 };
+		snprintf(value, sizeof(value), "%d", renderFps);
+		setenv("GX_RENDER_FPS", value, 1);
+	}
+	if (getenv("GX_LOGIC_FPS") == nullptr) {
+		char value[16] = { 0 };
+		snprintf(value, sizeof(value), "%d", logicFps);
+		setenv("GX_LOGIC_FPS", value, 1);
+	}
+	// GeneralsX @refactor 26/07/2026 GX_CINEMATIC_LOGIC_FPS is gone. Nothing ever consumed it: a
+	// separate cutscene logic rate was never wired into the frame pacer, so the option only looked
+	// like it worked. Scripted sequences now follow the one game speed setting like everything else,
+	// which is also what makes them respond to the speed slider at last.
+
+	bool hasWindowMode = false;
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "-fullscreen") == 0 || strcmp(argv[i], "-win") == 0) {
+			hasWindowMode = true;
+			break;
+		}
+	}
+	if (!hasWindowMode && argc < 63) {
+		static char fullscreenFlag[] = "-fullscreen";
+		static char* appArgv[64] = { nullptr };
+		for (int i = 0; i < argc; ++i) {
+			appArgv[i] = argv[i];
+		}
+		appArgv[argc++] = fullscreenFlag;
+		appArgv[argc] = nullptr;
+		argv = appArgv;
+	}
+
+	fprintf(stderr,
+		"\nNative macOS app launch: assets='%s' render=%d logic=%d speed=%.2fx\n",
+		zeroHourAssets != nullptr ? zeroHourAssets : "(unset)",
+		renderFps,
+		logicFps,
+		static_cast<double>(logicFps) / 30.0);
+}
+#endif
 
 /**
  * FilterSoftwareVulkanICDs
@@ -248,6 +546,10 @@ GameEngine *CreateGameEngine(void)
 int main(int argc, char* argv[])
 {
 	int exitcode = 1;
+
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	ConfigureMacOSAppRuntime(argc, argv);
+#endif
 
 	// TheSuperHackers @build felipebraz 13/02/2026
 	// Store command line arguments in globals for CommandLine.cpp parser
@@ -472,6 +774,30 @@ int main(int argc, char* argv[])
 		// double-deliver finger 1 and fight the two-finger pan logic.
 		SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 #endif
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 05/08/2026 Fullscreen stays a real macOS Space. Do not turn this off.
+		//
+		// Turning SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES off was tried and it is not an acceptable
+		// fullscreen. setFullscreenSpace: refuses (SDL_cocoawindow.m:920), SDL_UpdateFullscreenMode
+		// falls past the Space shortcut (SDL_video.c:1985), and Cocoa_SetWindowFullscreen builds a
+		// borderless window itself -- but in this game that lands as a window smaller than the display
+		// with the menu bar, Dock, desktop widgets and other apps' windows all still visible around it,
+		// and pointer coordinates no longer line up with what is drawn. Real Space fullscreen is a
+		// requirement, so the exit problem has to be solved inside it.
+		//
+		// The exit problem is that a Space outlives the process that made it: the game exits and the
+		// Space can stay in front with no window inside it, nothing for Force Quit to list and nothing
+		// for Cmd-Tab to leave. With one usable display there is no second screen to fall back to. The
+		// countermeasures are all on the way out, not here: leaveFullscreenForShutdown() in
+		// SDL3GameEngine.cpp waits out the un-fullscreen transition, GXKickDisplayConfiguration()
+		// forces a CGDisplayReconfiguration (the programmatic equivalent of replugging the monitor) so
+		// WindowServer rebuilds its Space list, and the SIGKILL watchdog guarantees the process dies.
+		//
+		// The hint is set explicitly rather than left at its default because allow_spaces is read
+		// exactly once during video init (SDL_cocoavideo.m:217), so this is the only place it can be
+		// set at all -- and because it documents that off is a known-bad value here.
+		SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "1");
+#endif
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
 			fprintf(stderr, "FATAL: Failed to initialize SDL3: %s\n", SDL_GetError());
 			return 1;
@@ -496,15 +822,45 @@ int main(int argc, char* argv[])
 		// Create SDL3 window with Vulkan support
 		fprintf(stderr, "INFO: Creating SDL3 Vulkan window...\n");
 		Uint32 windowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;  // Start hidden, show after D3D init
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-		// Request a native-resolution Metal drawable (e.g. 2868x1320 instead of the
-		// 956x440 point size). Without this the swapchain renders at point size and
-		// the display upscales 3x, visibly blurring textures and terrain.
-		windowFlags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+		int initialWindowW = 1024;
+		int initialWindowH = 768;
+		bool appleRetinaMode = false;
+#if defined(__APPLE__)
+		// GeneralsX @bugfix: request a Retina (HiDPI) backing drawable on both iOS and
+		// macOS so the game renders at full display sharpness. The internal engine
+		// resolution, resolution list and font scaling are all in physical pixels to match
+		// (see GeneralsX_GetMacDisplayMetrics in W3DDisplay.cpp for the unit convention);
+		// only SDL window geometry and mouse event coordinates remain in points.
+		appleRetinaMode = true;
+		if (appleRetinaMode) {
+			windowFlags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
+		}
+#endif
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// Enter fullscreen before DXVK creates its first backbuffer. Switching the
+		// Cocoa window from 1024x768 to fullscreen later resizes the swapchain, but
+		// leaves Generals' D3D8 backbuffer and mouse transform at the bootstrap size.
+		bool requestedFullscreen = false;
+		for (int i = 1; i < __argc; ++i) {
+			if (strcmp(__argv[i], "-fullscreen") == 0) {
+				requestedFullscreen = true;
+				break;
+			}
+		}
+		if (requestedFullscreen) {
+			const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+			if (mode && mode->w > 0 && mode->h > 0) {
+				initialWindowW = mode->w;
+				initialWindowH = mode->h;
+			}
+			windowFlags |= SDL_WINDOW_FULLSCREEN;
+			fprintf(stderr, "INFO: macOS pre-D3D fullscreen window set to %dx%d\n",
+				initialWindowW, initialWindowH);
+		}
 #endif
 		TheSDL3Window = SDL_CreateWindow(
 			"Command & Conquer Generals: Zero Hour",
-			1024, 768,  // Default resolution
+			initialWindowW, initialWindowH,
 			windowFlags
 		);
 
@@ -518,15 +874,15 @@ int main(int argc, char* argv[])
 		ApplicationHWnd = (HWND)TheSDL3Window;
 		fprintf(stderr, "INFO: SDL3 window created successfully\n");
 
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-		// Match the game's internal resolution to the phone screen's aspect ratio.
-		// Without this the engine runs its 4:3 default inside the 19.5:9 display:
-		// pillarboxed picture and a skewed window->game coordinate mapping. Height
-		// stays at the engine's 600px design baseline (UI layouts assume >= 600);
-		// width follows the real aspect. Injected as -xres/-yres argv entries so
-		// the normal command-line path applies them (user-passed flags still win
-		// because the parser lets later arguments override earlier ones... ours go
-		// last, so only add them if the user didn't pass explicit -xres/-yres).
+#if defined(__APPLE__)
+		// Match the internal render size to the screen's PHYSICAL PIXEL size, so the engine
+		// renders 1:1 into DXVK's Retina swapchain instead of rendering small and being
+		// upscaled. Generals' UI geometry (GameWindowManagerScript::parseScreenRect) and font
+		// sizing (GlobalLanguage::adjustFontSize) both scale linearly off TheDisplay's
+		// dimensions, so raising the internal resolution keeps layout proportions intact while
+		// vector-drawn text and 3D geometry gain real detail. Bitmap UI art (ControlBar) is
+		// fixed-resolution and stays as soft as its source, which no resolution change can fix.
+		// Explicit user -xres/-yres options still take precedence.
 		{
 			bool userSetRes = false;
 			for (int i = 1; i < __argc; ++i) {
@@ -535,11 +891,69 @@ int main(int argc, char* argv[])
 					break;
 				}
 			}
-			// Use the pixel size of the high-density drawable: the game renders
-			// 1:1 into the native-resolution swapchain, and fonts/UI rescale via
-			// the engine's resolution-aware font scaling (GlobalLanguage).
+			// GeneralsX @bugfix 26/07/2026 Only force the internal resolution in fullscreen.
+			// In windowed mode the screen size is the wrong target: the window is smaller than
+			// the screen (title bar, menu bar, Dock), so injecting the full screen size made the
+			// engine render 4096x2304 into a 4096x2004 backbuffer and the pillarbox path scaled
+			// the whole frame again -- the exact blur this injection exists to remove. Windowed
+			// mode instead keeps the user's configured resolution and lets
+			// SDL3_ApplyWindowModeForRenderConfig size the window to resolution/density points;
+			// the render resolution then follows from the window's real pixel extent.
+#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+			if (!requestedFullscreen) {
+				userSetRes = true;
+			}
+#endif
 			int winW = 0, winH = 0;
+#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 			SDL_GetWindowSizeInPixels(TheSDL3Window, &winW, &winH);
+#else
+			// GeneralsX @bugfix 26/07/2026 Inject the internal resolution in PHYSICAL PIXELS.
+			//
+			// This previously injected the display mode's logical point size. Combined with the
+			// HIGH_PIXEL_DENSITY drawable and DXVK's pixel-sized swapchain, that made every frame
+			// render into a point-sized offscreen target and get upscaled by the backing scale
+			// factor in DX8Wrapper::Pillarbox_End -- a 2x blur over the entire game, UI and text
+			// included. Matching the engine resolution to the backbuffer is what makes the
+			// pillarbox path a no-op and gives genuine 1:1 HiDPI output.
+			SDL_DisplayID displayId = SDL_GetDisplayForWindow(TheSDL3Window);
+			const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(displayId);
+			if (mode) {
+				const float density = mode->pixel_density > 0.0f ? mode->pixel_density : 1.0f;
+				const int pointW = mode->w;
+				const int pointH = mode->h;
+				winW = (int)(mode->w * density);
+				winH = (int)(mode->h * density);
+				if (s_macRenderScalePercent > 0 && s_macRenderScalePercent < 100) {
+					// GeneralsX @bugfix 10/08/2026 Launch in point mode at the PANEL's pixels.
+					//
+					// Point mode means one rendered pixel per physical panel pixel; see
+					// GeneralsX_GetFullscreenRenderSize in W3DDisplay.cpp for why the percentage cannot
+					// express that on a scaled display and for the mode's full rationale. This is the
+					// same rule applied one step earlier, before the display layer exists.
+					//
+					// Without it the saved Resolution was overwritten every launch by the percentage
+					// result, which on a scaled display is the point grid rather than the panel: a
+					// 2560x1440 panel presented as 2048x1152 points over a 4096x2304 framebuffer
+					// launched the game at 2048x1152 and had to be corrected by hand each time.
+					int panelW = 0, panelH = 0;
+					if (GXGetPanelNativePixelSize(&panelW, &panelH) && panelW > 0 && panelH > 0)
+					{
+						fprintf(stderr, "INFO: Apple point mode launch: panel native %dx%d "
+							"(points %dx%d, framebuffer %dx%d, %d%% would have given %dx%d)\n",
+							panelW, panelH, pointW, pointH, winW, winH, s_macRenderScalePercent,
+							(winW * s_macRenderScalePercent) / 100,
+							(winH * s_macRenderScalePercent) / 100);
+						winW = panelW;
+						winH = panelH;
+					}
+					else {
+						winW = (winW * s_macRenderScalePercent) / 100;
+						winH = (winH * s_macRenderScalePercent) / 100;
+					}
+				}
+			}
+#endif
 			if (!userSetRes && winW > 0 && winH > 0 && winW > winH) {
 				static char xresVal[16], yresVal[16];
 				static char xresFlag[] = "-xres";
@@ -562,8 +976,9 @@ int main(int argc, char* argv[])
 				newArgv[n] = nullptr;
 				__argv = newArgv;
 				__argc = n;
-				fprintf(stderr, "INFO: iOS internal resolution set to %sx%s (window %dx%d)\n",
-				        xresVal, yresVal, winW, winH);
+				fprintf(stderr, "INFO: Apple %s internal resolution set to %sx%s (target %dx%d, renderScale=%d%%)\n",
+				        appleRetinaMode ? "Retina" : "logical",
+				        xresVal, yresVal, winW, winH, s_macRenderScalePercent);
 			}
 		}
 #endif
@@ -582,11 +997,55 @@ int main(int argc, char* argv[])
 		exitcode = 1;
 	}
 
+#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+	// GeneralsX @bugfix 02/08/2026 Never let shutdown be the thing that traps the machine.
+	//
+	// Armed before any teardown runs, including the paths reached by the catch blocks above. Nothing
+	// past this point is allowed to take longer than the watchdog's window: DXVK's worker threads,
+	// MoltenVK and OpenAL all still have live threads and GPU objects here, and a deadlock among them
+	// used to leave a process that was mid-exit -- gone from the Force Quit list, since AppKit had
+	// already dropped it, but still owning the screen. SIGKILL from a detached thread is the one
+	// escape that needs no cooperation from whatever is stuck.
+	GXArmShutdownWatchdog();
+#endif
+
 	// Cleanup SDL3 resources
 	if (TheSDL3Window) {
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		// GeneralsX @bugfix 05/08/2026 If the window is still fullscreen here, the Space is about to
+		// be orphaned, so force a display reconfiguration once the window is gone.
+		//
+		// Reaching this point means leaveFullscreenForShutdown() gave up: macOS refused the
+		// un-fullscreen request for its whole budget. SDL_UpdateFullscreenMode early-bails once
+		// is_destroying is set, so SDL_DestroyWindow will not unwind the Space either -- it just
+		// closes the window and leaves a Space with nothing inside it, in front of everything, on the
+		// only display this machine has. That is the black screen.
+		//
+		// An earlier attempt skipped SDL_DestroyWindow and _exit()ed with the window intact, betting
+		// that WindowServer would collapse a fullscreen window whose client had died. The 05/08/2026
+		// log disproved it: the branch ran, the process exited 0, and the display stayed black until
+		// the monitor was replugged by hand. It also skipped SDL_Quit and the memory manager.
+		//
+		// What did recover the display was replugging the monitor, i.e. a CGDisplayReconfiguration --
+		// WindowServer rebuilds its Space list and the orphaned Space has nothing left to attach to.
+		// GXKickDisplayConfiguration() is that replug done in software (mode change and back). Order
+		// matters: kick *after* SDL_DestroyWindow, because while the window still exists the Space is
+		// legitimately occupied and a reconfiguration will simply rebuild it.
+		const bool strandedFullscreen =
+			(SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0;
+		if (strandedFullscreen) {
+			fprintf(stderr, "WARNING: still fullscreen at teardown -- will kick the display "
+				"configuration after closing the window\n");
+		}
+#endif
 		SDL_DestroyWindow(TheSDL3Window);
 		TheSDL3Window = nullptr;
 		ApplicationHWnd = nullptr;
+#if defined(__APPLE__) && !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+		if (strandedFullscreen) {
+			GXKickDisplayConfiguration();
+		}
+#endif
 	}
 	SDL_Quit();
 

@@ -172,6 +172,10 @@ class Mouse : public SubsystemInterface
 		CursorCaptureBlockReason_Paused,
 		CursorCaptureBlockReason_Unfocused,
 		CursorCaptureBlockReadon_CursorIsOutside,
+		// GeneralsX @feature 27/07/2026 The user asked for the cursor back, and it stays released until
+		// they ask for it again. Every other reason here is something the app observed; this one is a
+		// deliberate choice, so nothing clears it implicitly -- not a focus change, not a mode change.
+		CursorCaptureBlockReason_UserReleased,
 
 		CursorCaptureBlockReason_Count
 	};
@@ -292,6 +296,8 @@ public:
 	void setCursorCaptureMode(CursorCaptureMode mode); ///< set the rules for the mouse capture
 	void refreshCursorCapture(); ///< refresh the mouse capture
 	Bool isCursorCaptured(); ///< true if the mouse is captured in the game window
+	Bool toggleUserCursorRelease(); ///< release the cursor on request, or take it back; returns TRUE if now released
+	Bool isCursorReleasedByUser() const; ///< true while the user is holding the cursor released
 
 	// access methods for the mouse data
 	const MouseIO *getMouseStatus() { return &m_currMouse; }							///< get current mouse status
@@ -413,6 +419,7 @@ protected:
 	Int m_highlightPos;
 	UnsignedInt m_highlightUpdateStart;
 	UnsignedInt m_stillTime;
+	ICoord2D m_stillPos;		///< where the cursor was when m_stillTime was last taken; see createStreamMessages
 	RGBAColorInt m_tooltipTextColor;
 	RGBAColorInt m_tooltipBackColor;
 
