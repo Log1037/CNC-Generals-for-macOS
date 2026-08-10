@@ -132,8 +132,8 @@ export VULKAN_SDK="$HOME/VulkanSDK/<version>/macOS"
 ## 5. 获取源码、构建和部署
 
 ```bash
-git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
-cd GeneralsX
+git clone https://github.com/Log1037/CNC-Generals-for-iOS-macOS.git
+cd CNC-Generals-for-iOS-macOS
 
 export GX_RUNTIME_ROOT="${GX_RUNTIME_ROOT:-$HOME/GeneralsX}"
 

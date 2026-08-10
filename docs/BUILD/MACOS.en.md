@@ -72,8 +72,8 @@ The data must come from the user's own lawful Windows copy. This repository does
 ## 4. Clone and build
 
 ```bash
-git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
-cd GeneralsX
+git clone https://github.com/Log1037/CNC-Generals-for-iOS-macOS.git
+cd CNC-Generals-for-iOS-macOS
 
 ./scripts/build/macos/build-macos-zh.sh
 ```

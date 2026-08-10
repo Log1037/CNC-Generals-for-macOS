@@ -1,14 +1,14 @@
-# 《命令与征服：将军——零点行动》Apple 平台原生版
+# CNC Generals for iOS/macOS
 
 [中文](README.md) | [English](README.en.md)
 
 <img width="500" height="281" alt="《零点行动》在 Apple 平台运行" src="https://github.com/user-attachments/assets/aeaf6692-36e6-40c8-b9f8-8066d014ec4b" />
 
-这是一个让《命令与征服：将军——零点行动》在 Apple Silicon Mac、iPhone 和 iPad 上原生运行的社区项目。它不是 Windows 模拟器：游戏引擎直接编译为 ARM64，原有 DirectX 8 渲染经过 DXVK、Vulkan 和 MoltenVK 转换到 Metal。
+> **上游说明：** 本仓库不是从零开始的独立移植。Apple 平台原生移植的直接基础来自 [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)；**CNC Generals for iOS/macOS** 只代表在该上游基础上，针对维护者个人使用情境所做的增强、修复和打包工作。上游的完整项目介绍与移植历程请直接阅读其 README。
 
-本仓库是 [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad) 的个人需求版分支。它保留上游的 Apple 平台移植成果，并根据维护者在 Apple Silicon Mac、中文游戏资源、外接盘安装和日常游玩中遇到的问题，整合了一批 macOS 使用体验修复与本地单机功能。
+本项目让《命令与征服：将军——零点行动》在 Apple Silicon Mac、iPhone 和 iPad 上原生运行。它不是 Windows 模拟器：游戏引擎直接编译为 ARM64，原有 DirectX 8 渲染经过 DXVK、Vulkan 和 MoltenVK 转换到 Metal。本分支保留上游成果，并根据 Apple Silicon Mac、中文游戏资源、外接盘安装和日常游玩中实际遇到的问题，内嵌了一批个人常用功能与体验修复。
 
-> 本仓库不包含《将军》或《零点行动》的商业游戏资源。你必须自行拥有并提供合法的 Windows 版游戏文件。
+> 本仓库及其 GitHub Releases 不包含《将军》或《零点行动》的商业游戏资源。你必须自行拥有并提供合法的 Windows 版游戏文件。个人为自己的 iPhone 或 iPad 构建时，可以把自己合法持有的游戏资源封装进私人 IPA；这种 IPA 仅供个人设备安装，不进入本仓库，也不对外分发。
 
 ## 这个分支增加了什么
 
@@ -27,7 +27,7 @@
 | 平台 | 状态 | 说明 |
 |---|---|---|
 | Apple Silicon macOS | 主要使用平台 | 支持本地构建、命令行运行和双击 `.app` |
-| iPhone / iPad | 继承自直接上游 | 需要完整 Xcode、签名 Team 和 iOS 打包流程 |
+| iPhone / iPad | 上游已有实现，本分支待回归 | 个人构建可把自有资源封装进 App，并用自己的签名安装 |
 | Linux | 共享引擎仍保留 | 本分支的 macOS 修改尚需更完整的跨平台回归测试 |
 
 ## 快速开始
@@ -65,8 +65,8 @@ export VULKAN_SDK="$HOME/VulkanSDK/<version>/macOS"
 ### 3. 克隆、构建和部署
 
 ```bash
-git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
-cd GeneralsX
+git clone https://github.com/Log1037/CNC-Generals-for-iOS-macOS.git
+cd CNC-Generals-for-iOS-macOS
 
 export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
 ./scripts/build/macos/build-macos-zh.sh

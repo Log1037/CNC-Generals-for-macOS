@@ -72,8 +72,8 @@ export GX_RUNTIME_ROOT="/Volumes/My Games/GeneralsX Runtime"
 ## 4. 克隆与构建
 
 ```bash
-git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
-cd GeneralsX
+git clone https://github.com/Log1037/CNC-Generals-for-iOS-macOS.git
+cd CNC-Generals-for-iOS-macOS
 
 ./scripts/build/macos/build-macos-zh.sh
 ```

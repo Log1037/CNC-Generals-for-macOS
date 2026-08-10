@@ -1,14 +1,14 @@
-# Command & Conquer: Generals — Zero Hour for Apple Platforms
+# CNC Generals for iOS/macOS
 
 [中文](README.md) | [English](README.en.md)
 
 <img width="500" height="281" alt="Zero Hour running on an Apple platform" src="https://github.com/user-attachments/assets/aeaf6692-36e6-40c8-b9f8-8066d014ec4b" />
 
-This community project runs Command & Conquer: Generals — Zero Hour natively on Apple Silicon Macs, iPhone, and iPad. It is not a Windows emulator: the game engine is compiled directly for ARM64, while the original DirectX 8 renderer reaches Metal through DXVK, Vulkan, and MoltenVK.
+> **Upstream attribution:** This repository is not an independent port made from scratch. Its direct Apple-platform porting base is [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad). **CNC Generals for iOS/macOS** names only the enhancements, fixes, and packaging work added for the maintainer's personal use on top of that upstream project. Please read the upstream README for its complete project description and porting history.
 
-This repository is a personal-use-driven fork of [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad). It retains the upstream Apple-platform port and adds macOS usability fixes and local single-player features based on real use with an Apple Silicon Mac, Chinese game data, an external-disk installation, and day-to-day play.
+This project runs Command & Conquer: Generals — Zero Hour natively on Apple Silicon Macs, iPhone, and iPad. It is not a Windows emulator: the game engine is compiled directly for ARM64, while the original DirectX 8 renderer reaches Metal through DXVK, Vulkan, and MoltenVK. This fork preserves the upstream work and embeds personal-use features and usability fixes prompted by real play with an Apple Silicon Mac, Chinese game data, and an external-disk installation.
 
-> This repository does not include commercial assets from Generals or Zero Hour. You must own and supply a lawful Windows copy of the game data.
+> This repository and its GitHub Releases do not include commercial assets from Generals or Zero Hour. You must own and supply a lawful Windows copy of the game data. A personal iPhone or iPad build may bundle game data that you lawfully own into a private IPA; that IPA is for installation on your own devices and is not committed here or distributed publicly.
 
 ## What this fork adds
 
@@ -27,7 +27,7 @@ See the [English engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELO
 | Platform | Status | Notes |
 |---|---|---|
 | Apple Silicon macOS | Primary use platform | Supports local builds, command-line runs, and a double-clickable `.app` |
-| iPhone / iPad | Inherited from the direct upstream | Requires full Xcode, a signing team, and the iOS packaging workflow |
+| iPhone / iPad | Implemented upstream; fork regression pending | A personal build may bundle owned game data and be installed with your own signing identity |
 | Linux | Shared engine retained | The macOS customization still needs broader cross-platform regression testing |
 
 ## Quick start
@@ -65,8 +65,8 @@ Install the Vulkan SDK from LunarG; Homebrew Vulkan headers alone are not suffic
 ### 3. Clone, build, and deploy
 
 ```bash
-git clone https://github.com/Log1037/Generals-Mac-iOS-iPad.git GeneralsX
-cd GeneralsX
+git clone https://github.com/Log1037/CNC-Generals-for-iOS-macOS.git
+cd CNC-Generals-for-iOS-macOS
 
 export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
 ./scripts/build/macos/build-macos-zh.sh
