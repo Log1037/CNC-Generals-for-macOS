@@ -2283,5 +2283,3 @@ void DX8MeshRendererClass::Invalidate( bool shutdown)
 
 
 
-
-

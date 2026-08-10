@@ -477,9 +477,14 @@ void SinglePlayerLoadScreen::init( GameInfo *game )
 	m_videoBuffer = TheDisplay->createVideoBuffer();
 	if (	m_videoBuffer == nullptr ||
 				!m_videoBuffer->allocate(	m_videoStream->width(),
-													m_videoStream->height())
+											m_videoStream->height())
 		)
 	{
+		fprintf(stderr,
+			"ERROR: GX single-player load movie buffer failed movie=%s size=%dx%d\n",
+			TheCampaignManager->getCurrentMission()->m_movieLabel.str(),
+			m_videoStream->width(),
+			m_videoStream->height());
 		delete m_videoBuffer;
 		m_videoBuffer = nullptr;
 
@@ -934,6 +939,16 @@ void ChallengeLoadScreen::init( GameInfo *game )
 {
 	const Campaign *campaign = TheCampaignManager->getCurrentCampaign();
 	const Mission *mission = TheCampaignManager->getCurrentMission();
+	const Int introStartTime = timeGetTime();
+	const Bool lodMemoryPass = TheGameLODManager == nullptr || TheGameLODManager->didMemPass();
+	fprintf(stderr,
+		"INFO: GX challenge intro begin campaign=%s mission=%s movie=%s lod_mem_pass=%d voice_length=%d render_limit=%d\n",
+		campaign ? campaign->m_name.str() : "<null>",
+		mission ? mission->m_name.str() : "<null>",
+		mission ? mission->m_movieLabel.str() : "<null>",
+		lodMemoryPass ? 1 : 0,
+		mission ? mission->m_voiceLength : -1,
+		TheGlobalData ? TheGlobalData->m_framesPerSecondLimit : -1);
 
 	// the player general is tied to the campaign
 	const GeneralPersona* generalPlayer = TheChallengeGenerals->getPlayerGeneralByCampaignName( campaign->m_name );
@@ -959,13 +974,29 @@ void ChallengeLoadScreen::init( GameInfo *game )
 	m_videoStream = TheVideoPlayer->open( TheCampaignManager->getCurrentMission()->m_movieLabel );
 	if (m_videoStream == nullptr)
 	{
+		fprintf(stderr,
+			"ERROR: GX challenge intro movie open failed label=%s elapsed_ms=%d\n",
+			mission ? mission->m_movieLabel.str() : "<null>",
+			timeGetTime() - introStartTime);
 		return;
 	}
+	fprintf(stderr,
+		"INFO: GX challenge intro movie opened size=%dx%d frames=%d initial_frame=%d\n",
+		m_videoStream->width(),
+		m_videoStream->height(),
+		m_videoStream->frameCount(),
+		m_videoStream->frameIndex());
 
 	// Create the new buffer
 	m_videoBuffer = TheDisplay->createVideoBuffer();
 	if (m_videoBuffer == nullptr || !m_videoBuffer->allocate(	m_videoStream->width(), m_videoStream->height() ))
 	{
+		fprintf(stderr,
+			"ERROR: GX challenge intro movie buffer failed movie=%s size=%dx%d elapsed_ms=%d\n",
+			mission ? mission->m_movieLabel.str() : "<null>",
+			m_videoStream->width(),
+			m_videoStream->height(),
+			timeGetTime() - introStartTime);
 		delete m_videoBuffer;
 		m_videoBuffer = nullptr;
 
@@ -1043,7 +1074,6 @@ void ChallengeLoadScreen::init( GameInfo *game )
 	namekey = TheNameKeyGenerator->nameToKey( "ChallengeLoadScreen.wnd:BioStrategyEntryRight");
 	m_bioStrategyEntryRight = TheWindowManager->winGetWindowFromId( m_loadScreen, namekey );
 
-
 	// make sure reticle stuff starts out hidden
 //	m_overlayReticleCircleLineOuter->winHide(TRUE);
 //	m_overlayReticleCircleLineInner->winHide(TRUE);
@@ -1055,17 +1085,34 @@ void ChallengeLoadScreen::init( GameInfo *game )
 	m_wndVideoManager = NEW WindowVideoManager;
 	m_wndVideoManager->init();
 
-	if(TheGameLODManager && TheGameLODManager->didMemPass())
+	// On the native macOS build, always use the complete timed presentation.
+	// The legacy low-memory path skips the movie and waits VoiceLength seconds;
+	// Challenge missions commonly leave VoiceLength at zero, which makes the
+	// entire VS/announcer sequence disappear in a single frame if old hardware
+	// detection reports a false negative.
+	Bool useAnimatedIntro = lodMemoryPass;
+#ifdef __APPLE__
+	useAnimatedIntro = TRUE;
+#endif
+	Bool introAborted = FALSE;
+	const Int introFrameCount = m_videoStream->frameCount();
+	if(useAnimatedIntro && introFrameCount > 1)
 	{
 		// TheSuperHackers @bugfix Originally this movie render loop stopped rendering when the game window was inactive.
 		// This either skipped the movie or caused decompression artifacts. Now the video just keeps playing until it done.
 
-		Int progressUpdateCount = m_videoStream->frameCount() / FRAME_FUDGE_ADD;
+		Int progressUpdateCount = max<Int>(1, introFrameCount / FRAME_FUDGE_ADD);
 		Int shiftedPercent = -FRAME_FUDGE_ADD + 1;
-		while (m_videoStream->frameIndex() < m_videoStream->frameCount() - 1 )
+		while (m_videoStream->frameIndex() < introFrameCount - 1 )
 		{
 			if (GameClient::isMovieAbortRequested())
 			{
+				introAborted = TRUE;
+				fprintf(stderr,
+					"INFO: GX challenge intro abort requested frame=%d/%d elapsed_ms=%d\n",
+					m_videoStream->frameIndex(),
+					introFrameCount,
+					timeGetTime() - introStartTime);
 				break;
 			}
 
@@ -1114,6 +1161,11 @@ void ChallengeLoadScreen::init( GameInfo *game )
 	}
 	else
 	{
+		fprintf(stderr,
+			"WARN: GX challenge intro using legacy static path lod_mem_pass=%d frames=%d voice_length=%d\n",
+			lodMemoryPass ? 1 : 0,
+			introFrameCount,
+			mission ? mission->m_voiceLength : -1);
 		// if we're min speced
 		m_videoStream->frameGoto(m_videoStream->frameCount()); // zero based
 		while(!m_videoStream->isFrameReady())
@@ -1155,6 +1207,13 @@ void ChallengeLoadScreen::init( GameInfo *game )
 		TheWindowManager->update();
 		TheDisplay->draw();
 	}
+	fprintf(stderr,
+		"INFO: GX challenge intro end path=%s frame=%d/%d elapsed_ms=%d aborted=%d\n",
+		useAnimatedIntro && introFrameCount > 1 ? "animated" : "static",
+		m_videoStream ? m_videoStream->frameIndex() : -1,
+		introFrameCount,
+		timeGetTime() - introStartTime,
+		introAborted ? 1 : 0);
 	setFPMode();
 
 
@@ -2027,4 +2086,3 @@ void MapTransferLoadScreen::setCurrentFilename(AsciiString filename)
 		GadgetStaticTextSetText(m_fileNameText, txt);
 	}
 }
-

@@ -114,6 +114,8 @@ IDirect3DSurface8 *W3DShaderManager::m_oldRenderSurface=nullptr;	///<previous re
 IDirect3DTexture8 *W3DShaderManager::m_renderTexture=nullptr;		///<texture into which rendering will be redirected.
 IDirect3DSurface8 *W3DShaderManager::m_newRenderSurface=nullptr;	///<new render target inside m_renderTexture
 IDirect3DSurface8 *W3DShaderManager::m_oldDepthSurface=nullptr;	///<previous depth buffer surface
+IDirect3DSurface8 *W3DShaderManager::m_savedRenderSurface=nullptr;	///<target bound when the current RTT pass began
+IDirect3DSurface8 *W3DShaderManager::m_savedDepthSurface=nullptr;	///<depth bound when the current RTT pass began
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
 /*===========================================================================================*/
@@ -2610,6 +2612,8 @@ W3DShaderManager::W3DShaderManager()
 	m_renderTexture = nullptr;
 	m_newRenderSurface = nullptr;
 	m_oldDepthSurface = nullptr;
+	m_savedRenderSurface = nullptr;
+	m_savedDepthSurface = nullptr;
 	m_renderingToTexture = false;
 	Int i;
 	for (i=0; i<W3DShaderManager::ST_MAX; i++)
@@ -2718,6 +2722,11 @@ void W3DShaderManager::shutdown()
 	SAFE_RELEASE(m_renderTexture);
 	SAFE_RELEASE(m_oldRenderSurface);
 	SAFE_RELEASE(m_oldDepthSurface);
+	// GeneralsX @bugfix 05/08/2026 Drop the per-pass captures too. shutdown() runs on device reset,
+	// so leaving these held would keep stale surfaces of the old device alive.
+	SAFE_RELEASE(m_savedRenderSurface);
+	SAFE_RELEASE(m_savedDepthSurface);
+	m_renderingToTexture = false;
 	m_currentShader = ST_INVALID;
 	m_currentFilter = FT_NULL_FILTER;
 	//release any assets associated with a shader (vertex/pixel shaders, textures, etc.)
@@ -2875,7 +2884,94 @@ void W3DShaderManager::startRenderToTexture()
 	DEBUG_ASSERTCRASH(!m_renderingToTexture, ("Already rendering to texture - cannot nest calls."));
 
 	if (m_renderingToTexture || m_newRenderSurface==nullptr || m_oldDepthSurface==nullptr) return;
-	HRESULT hr = DX8Wrapper::_Get_D3D_Device8()->SetRenderTarget(m_newRenderSurface,m_oldDepthSurface);
+
+	LPDIRECT3DDEVICE8 pDev = DX8Wrapper::_Get_D3D_Device8();
+	if (!pDev) return;
+
+	// GeneralsX @bugfix 05/08/2026 Capture the target/depth that are LIVE right now, per pass.
+	//
+	// init() sampled these once at device init/reset, which happens outside the
+	// DX8Wrapper::Pillarbox_Begin/End bracket -- so what it captured is the swapchain backbuffer.
+	// Under pillarbox the scene is drawn into an offscreen target at the *game* resolution instead,
+	// and restoring the init-time backbuffer in endRenderToTexture() sent the filter's own blit plus
+	// every later draw (UI, mouse, letterbox) to the backbuffer, which Pillarbox_End then cleared and
+	// overwrote with the untouched offscreen target -- losing the filtered view entirely.
+	SAFE_RELEASE(m_savedRenderSurface);
+	SAFE_RELEASE(m_savedDepthSurface);
+
+	if (FAILED(pDev->GetRenderTarget(&m_savedRenderSurface)) || !m_savedRenderSurface)
+	{
+		SAFE_RELEASE(m_savedRenderSurface);
+		return;
+	}
+
+	//A depth buffer is not guaranteed to be bound; that is not fatal, SetRenderTarget takes null.
+	if (FAILED(pDev->GetDepthStencilSurface(&m_savedDepthSurface)))
+		m_savedDepthSurface = nullptr;
+
+	// GeneralsX @bugfix 05/08/2026 Re-size the RTT texture to match the live target.
+	//
+	// Two reasons this must track the scene target rather than the backbuffer:
+	//   1. UVs. Every filter's postRender builds its blit quad as
+	//      tacticalViewPixel / TheDisplay->getWidth(). That only indexes the right texels when the
+	//      texture is exactly the size the scene was rendered at. Sized to the 2560x1440 swapchain
+	//      while the scene is drawn at 1280x720, the quad samples a quarter of the texture.
+	//   2. D3D8 requires the depth surface be at least as large as the render target. With a
+	//      game-resolution depth and a swapchain-sized texture, SetRenderTarget below simply fails --
+	//      and the error path permanently disables RTT, silently killing every screen filter.
+	{
+		D3DSURFACE_DESC targetDesc;
+
+		if (SUCCEEDED(m_savedRenderSurface->GetDesc(&targetDesc)))
+		{
+			D3DSURFACE_DESC texDesc;
+			Bool needsResize = true;
+
+			if (m_newRenderSurface && SUCCEEDED(m_newRenderSurface->GetDesc(&texDesc)))
+			{
+				needsResize = (texDesc.Width != targetDesc.Width ||
+					texDesc.Height != targetDesc.Height ||
+					texDesc.Format != targetDesc.Format);
+			}
+
+			if (needsResize && targetDesc.MultiSampleType == D3DMULTISAMPLE_NONE)
+			{
+				IDirect3DTexture8 *newTex = nullptr;
+
+				if (SUCCEEDED(pDev->CreateTexture(targetDesc.Width,targetDesc.Height,1,
+						D3DUSAGE_RENDERTARGET,targetDesc.Format,D3DPOOL_DEFAULT,&newTex)) && newTex)
+				{
+					IDirect3DSurface8 *newSurf = nullptr;
+
+					if (SUCCEEDED(newTex->GetSurfaceLevel(0,&newSurf)) && newSurf)
+					{
+						SAFE_RELEASE(m_newRenderSurface);
+						SAFE_RELEASE(m_renderTexture);
+						m_renderTexture = newTex;
+						m_newRenderSurface = newSurf;
+					}
+					else
+					{
+						SAFE_RELEASE(newSurf);
+						SAFE_RELEASE(newTex);
+					}
+				}
+				else
+				{
+					SAFE_RELEASE(newTex);
+				}
+			}
+		}
+	}
+
+	if (!m_newRenderSurface)
+	{
+		SAFE_RELEASE(m_savedRenderSurface);
+		SAFE_RELEASE(m_savedDepthSurface);
+		return;
+	}
+
+	HRESULT hr = pDev->SetRenderTarget(m_newRenderSurface,m_savedDepthSurface);
 
 	// TheSuperHackers @bugfix If SetRenderTarget fails (e.g. due to MSAA forced by driver
 	// profile causing a depth buffer mismatch that D3DSURFACE_DESC doesn't report), permanently
@@ -2887,6 +2983,8 @@ void W3DShaderManager::startRenderToTexture()
 		SAFE_RELEASE(m_renderTexture);
 		SAFE_RELEASE(m_oldRenderSurface);
 		SAFE_RELEASE(m_oldDepthSurface);
+		SAFE_RELEASE(m_savedRenderSurface);
+		SAFE_RELEASE(m_savedDepthSurface);
 		return;
 	}
 
@@ -2922,7 +3020,14 @@ IDirect3DTexture8 *W3DShaderManager::endRenderToTexture()
 {
 	DEBUG_ASSERTCRASH(m_renderingToTexture, ("Not rendering to texture."));
 	if (!m_renderingToTexture) return nullptr;
-	HRESULT hr = DX8Wrapper::_Get_D3D_Device8()->SetRenderTarget(m_oldRenderSurface,m_oldDepthSurface);	//restore original render target
+
+	// GeneralsX @bugfix 05/08/2026 Restore the target that was live when this pass began, not the
+	// backbuffer init() happened to sample. Under pillarbox those are different surfaces, and
+	// returning to the backbuffer stranded the rest of the frame on a surface Pillarbox_End overwrites.
+	IDirect3DSurface8 *restoreTarget = m_savedRenderSurface ? m_savedRenderSurface : m_oldRenderSurface;
+	IDirect3DSurface8 *restoreDepth = m_savedRenderSurface ? m_savedDepthSurface : m_oldDepthSurface;
+
+	HRESULT hr = DX8Wrapper::_Get_D3D_Device8()->SetRenderTarget(restoreTarget,restoreDepth);	//restore original render target
 	DEBUG_ASSERTCRASH(hr==S_OK, ("Set target failed unexpectedly."));
 	if (hr == S_OK)
 	{

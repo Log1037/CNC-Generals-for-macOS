@@ -1180,23 +1180,31 @@ void W3DTreeBuffer::unitMoved(Object *unit)
 					DEBUG_CRASH(("Invalid index."));
 					break;
 				}
-				if (m_trees[treeNdx].treeType<0) {
+				const Int treeType = m_trees[treeNdx].treeType;
+				if (treeType < 0) {
 					treeNdx = m_trees[treeNdx].nextInPartition;
 					continue;	//  Tree is deleted. [7/11/2003]
+				}
+				// Retail/mod maps can leave a stale tree record after its draw module
+				// type failed to load. Do not dereference an out-of-range/null type when
+				// a moving unit happens to enter that tree's partition.
+				if (treeType >= m_numTreeTypes || m_treeTypes[treeType].m_data == nullptr) {
+					treeNdx = m_trees[treeNdx].nextInPartition;
+					continue;
 				}
 				Coord3D delta;
 				delta.set(m_trees[treeNdx].location.X, m_trees[treeNdx].location.Y, m_trees[treeNdx].location.Z );
 				delta.sub(&pos);
 				if (radius*radius>delta.lengthSqr()) {
 					bool canTopple = unit->getCrusherLevel() > 1;
-					if (canTopple && m_treeTypes[m_trees[treeNdx].treeType].m_data->m_doTopple) {
+					if (canTopple && m_treeTypes[treeType].m_data->m_doTopple) {
 						// Give a vector with direction to thing.
 						Coord3D toppleVector;
 						toppleVector.set(m_trees[treeNdx].location.X, m_trees[treeNdx].location.Y, 0);
 						toppleVector.x -= unit->getPosition()->x;
 						toppleVector.y -= unit->getPosition()->y;
 						applyTopplingForce(m_trees+treeNdx, &toppleVector, 0, W3D_TOPPLE_OPTIONS_NONE);
-					} else if (m_treeTypes[m_trees[treeNdx].treeType].m_data->m_framesToMoveOutward>1) {
+					} else if (m_treeTypes[treeType].m_data->m_framesToMoveOutward>1) {
 						pushAsideTree(m_trees[treeNdx].drawableID, &pos, unit->getUnitDirectionVector2D(), unit->getID());
 					}
 				}
@@ -2033,7 +2041,6 @@ void W3DTreeBuffer::loadPostProcess()
 {
 	// empty. jba [8/11/2003]
 }
-
 
 
 

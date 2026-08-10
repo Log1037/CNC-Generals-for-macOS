@@ -3306,9 +3306,23 @@ static Real makeQuadraticS(Real t)
 
 // ------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------
+// GeneralsX @bugfix 26/07/2026 How much of a logic frame one rendered frame is worth.
+//
+// The scripted camera durations are all expressed in logic frames (milliseconds / 33.33), but the
+// camera used to be stepped once per rendered frame, so its playback speed was whatever the render
+// frame rate happened to be. Ignoring frozen time here is deliberate and matches
+// moveAlongWaypointPath: the whole point of CAMERA_MOD_FREEZE_TIME is that the camera keeps moving
+// while the simulation does not.
+static Real getCameraFrameAdvance()
+{
+	return TheFramePacer->getActualLogicTimeScaleOverFpsRatio(FramePacer::IgnoreFrozenTime);
+}
+
+// ------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------
 void W3DView::rotateCameraOneFrame()
 {
-	m_rcInfo.curFrame++;
+	m_rcInfo.curFrame += getCameraFrameAdvance();
 	if (TheGlobalData->m_disableCameraMovement) {
 		if (m_rcInfo.curFrame >= m_rcInfo.numFrames + m_rcInfo.numHoldFrames) {
 			removeScriptedState(Scripted_Rotate);
@@ -3379,7 +3393,7 @@ void W3DView::rotateCameraOneFrame()
 // ------------------------------------------------------------------------------------------------
 void W3DView::zoomCameraOneFrame()
 {
-	m_zcInfo.curFrame++;
+	m_zcInfo.curFrame += getCameraFrameAdvance();
 	if (TheGlobalData->m_disableCameraMovement) {
 		if (m_zcInfo.curFrame >= m_zcInfo.numFrames) {
 			removeScriptedState(Scripted_Zoom);
@@ -3405,7 +3419,7 @@ void W3DView::zoomCameraOneFrame()
 // ------------------------------------------------------------------------------------------------
 void W3DView::pitchCameraOneFrame()
 {
-	m_pcInfo.curFrame++;
+	m_pcInfo.curFrame += getCameraFrameAdvance();
 	if (TheGlobalData->m_disableCameraMovement) {
 		if (m_pcInfo.curFrame >= m_pcInfo.numFrames) {
 			removeScriptedState(Scripted_Pitch);

@@ -354,6 +354,7 @@ void ChallengeMenuInit( WindowLayout *layout, void *userData )
 	bioLine3Entry = TheWindowManager->winGetWindowFromId( parentMenu, bioBirthplaceEntryID ); // this window has been repurposed
 	bioStrategyEntryID = TheNameKeyGenerator->nameToKey( "ChallengeMenu.wnd:BioStrategyEntry" );
 	bioLine4Entry = TheWindowManager->winGetWindowFromId( parentMenu, bioStrategyEntryID ); // this window has been repurposed
+
 	backdropID = TheNameKeyGenerator->nameToKey( "ChallengeMenu.wnd:MainBackdrop" );
 	backdrop = TheWindowManager->winGetWindowFromId( parentMenu, backdropID);
 	bioParentID = TheNameKeyGenerator->nameToKey( "ChallengeMenu.wnd:GeneralsBioParent" );
@@ -682,9 +683,14 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
 				msg->appendIntegerArgument(TheCampaignManager->getRankPoints());
 
 
-        // Added so that, even though a ChallengeGame is really a SkirmishGame in SinglePlayerGame's clothing,
-        // GameEngine will still apply the default "FRAME CAP" as it does during "Solo Missions."
-        msg->appendIntegerArgument(LOGICFRAMES_PER_SECOND);	// FPS limit
+        // A ChallengeGame is really a SkirmishGame in SinglePlayerGame's clothing,
+        // so it needs an explicit render cap. Preserve the launcher/profile cap
+        // instead of forcing render back to the 30 Hz simulation baseline. This
+        // keeps the macOS 60-render/30-logic profile intact when the map starts.
+        const Int challengeRenderFps = TheGlobalData->m_framesPerSecondLimit >= LOGICFRAMES_PER_SECOND
+            ? TheGlobalData->m_framesPerSecondLimit
+            : LOGICFRAMES_PER_SECOND;
+        msg->appendIntegerArgument(challengeRenderFps);	// FPS limit
 
 				InitRandom(0);
 			}

@@ -46,6 +46,14 @@ SmudgeManager *TheSmudgeManager=nullptr;
 
 W3DSmudgeManager::W3DSmudgeManager()
 {
+	// GeneralsX @bugfix 05/08/2026 Initialize the resource members.
+	// ReAcquireResources() opens with ReleaseResources(), which REF_PTR_RELEASEs these pointers --
+	// so the very first call dereferenced whatever the allocator happened to leave behind. The
+	// size fields are now also read by the self-heal check in render(), which needs them defined.
+	m_backgroundTexture = nullptr;
+	m_indexBuffer = nullptr;
+	m_backBufferWidth = 0;
+	m_backBufferHeight = 0;
 }
 
 W3DSmudgeManager::~W3DSmudgeManager()
@@ -76,11 +84,53 @@ void W3DSmudgeManager::ReleaseResources()
 static_assert(SMUDGE_DRAW_SIZE * 5 < 0x10000, "Vertex index exceeds 16-bit limit");
 
 
+// GeneralsX @bugfix 05/08/2026 Sample the surface the scene is actually being drawn into.
+//
+// Upstream could assume "the scene lives in the swapchain backbuffer", so it sized
+// m_backgroundTexture from the backbuffer and copied from it. This port does not render there:
+// DX8Wrapper::Pillarbox_Begin binds an offscreen render target at the *game* resolution before
+// drawViews(), and only blits it onto the (window-sized) backbuffer in Pillarbox_End at the end of
+// the frame. With GXRenderScalePercent < 100 the two sizes differ, and reading the backbuffer
+// produced two faults at once:
+//
+//   1. the copy grabbed the PREVIOUS frame's already-upscaled composite, not the live scene;
+//   2. texClampX/Y in render() -- tacticalViewSize / surfaceSize -- collapsed to the render-scale
+//      ratio (0.5 at 50%), so the four corner verts sampled a shrunken top-left region of the
+//      screen instead of the pixels directly behind them.
+//
+// A smudge is only invisible because its corners sample exactly what they cover; the center vert is
+// the only one deliberately offset. Misalign the corners and the whole quad stops being a heat
+// shimmer and becomes a window onto a displaced, half-scale copy of the map -- the mirage seen
+// around the microwave tank, whose smudge particle system runs full-time and so shows it while idle.
+static SurfaceClass *Get_Scene_Surface()
+{
+	LPDIRECT3DDEVICE8 dev = DX8Wrapper::_Get_D3D_Device8();
+
+	if (dev)
+	{
+		IDirect3DSurface8 *renderTarget = nullptr;
+
+		if (SUCCEEDED(dev->GetRenderTarget(&renderTarget)) && renderTarget)
+		{
+			SurfaceClass *surface = NEW_REF(SurfaceClass,(renderTarget));
+			renderTarget->Release();	//SurfaceClass holds its own reference.
+			return surface;
+		}
+	}
+
+	//No device or no bound target: fall back to upstream behaviour.
+	return DX8Wrapper::_Get_DX8_Back_Buffer();
+}
+
 void W3DSmudgeManager::ReAcquireResources()
 {
 	ReleaseResources();
 
-	SurfaceClass *surface=DX8Wrapper::_Get_DX8_Back_Buffer();
+	SurfaceClass *surface=Get_Scene_Surface();
+
+	if (!surface)
+		return;
+
 	SurfaceClass::SurfaceDescription surface_desc;
 
 	surface->Get_Description(surface_desc);
@@ -314,21 +364,37 @@ void W3DSmudgeManager::render(RenderInfoClass &rinfo)
 	if (!testHardwareSupport())
 		return;
 
-	SurfaceClass *backBuffer = DX8Wrapper::_Get_DX8_Back_Buffer();
+	SurfaceClass *sceneSurface = Get_Scene_Surface();
 
-	if (!backBuffer)
+	if (!sceneSurface)
 		return;
+
+	SurfaceClass::SurfaceDescription surface_desc;
+	sceneSurface->Get_Description(surface_desc);
+
+	// GeneralsX @bugfix 05/08/2026 Self-heal a background texture that no longer matches the target.
+	// ReAcquireResources runs from BaseHeightMap outside the pillarbox begin/end bracket, so the
+	// texture it allocates can be sized for the swapchain rather than the offscreen target the scene
+	// is drawn into -- and a resolution or render-scale change resizes the target under us anyway.
+	// SurfaceClass::Copy only takes the CopyRects fast path on an exact size+format match; otherwise
+	// it silently falls back to a filtered D3DXLoadSurfaceFromSurface rescale, which reintroduces the
+	// very misalignment this fix removes. So re-allocate whenever the size drifts.
+	if (m_backgroundTexture &&
+		(m_backBufferWidth != (Int)surface_desc.Width || m_backBufferHeight != (Int)surface_desc.Height))
+	{
+		REF_PTR_RELEASE(m_backgroundTexture);
+		m_backgroundTexture = MSGNEW("TextureClass") TextureClass(surface_desc.Width,surface_desc.Height,surface_desc.Format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT, true);
+		m_backBufferWidth = surface_desc.Width;
+		m_backBufferHeight = surface_desc.Height;
+	}
 
 	SurfaceClass *background=m_backgroundTexture ? m_backgroundTexture->Get_Surface_Level() : nullptr;
 
 	if (!background)
 	{
-		REF_PTR_RELEASE(backBuffer);
+		REF_PTR_RELEASE(sceneSurface);
 		return;
 	}
-
-	SurfaceClass::SurfaceDescription surface_desc;
-	backBuffer->Get_Description(surface_desc);
 
 	CameraClass &camera=rinfo.Camera;
 	Vector3 vsVert;
@@ -429,15 +495,15 @@ void W3DSmudgeManager::render(RenderInfoClass &rinfo)
 	if (!count)
 	{
 		REF_PTR_RELEASE(background);
-		REF_PTR_RELEASE(backBuffer);
+		REF_PTR_RELEASE(sceneSurface);
 		return;	//nothing to render.
 	}
 
-	//Copy the area of backbuffer occupied by smudges into an alternate buffer.
-	background->Copy(0,0,0,0,surface_desc.Width,surface_desc.Height,backBuffer);
+	//Copy the area of the scene target occupied by smudges into an alternate buffer.
+	background->Copy(0,0,0,0,surface_desc.Width,surface_desc.Height,sceneSurface);
 
 	REF_PTR_RELEASE(background);
-	REF_PTR_RELEASE(backBuffer);
+	REF_PTR_RELEASE(sceneSurface);
 
 	Matrix4x4 identity(true);
 	DX8Wrapper::Set_Transform(D3DTS_WORLD,identity);
