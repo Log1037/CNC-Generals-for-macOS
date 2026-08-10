@@ -10,8 +10,9 @@ if [[ $# -lt 1 ]]; then
 fi
 
 STEAM_USER="$1"
-DEST="$HOME/GeneralsX/GeneralsZH"
-TMP_DIR="$HOME/GeneralsX/.steamcmd_zh"
+GX_RUNTIME_ROOT="${GX_RUNTIME_ROOT:-${HOME}/GeneralsX}"
+DEST="$GX_RUNTIME_ROOT/GeneralsZH"
+TMP_DIR="$GX_RUNTIME_ROOT/.steamcmd_zh"
 
 mkdir -p "$TMP_DIR" "$DEST"
 
@@ -30,4 +31,4 @@ rsync -a --exclude="*.exe" --exclude="*.dll" "$TMP_DIR/" "$DEST/"
 echo "Done. Assets in place:"
 ls "$DEST"/*.big 2>/dev/null | head
 echo
-echo "Launch with: cd ~/GeneralsX/GeneralsZH && ./run.sh -win"
+echo "Launch with: cd '$DEST' && ./run.sh -win"
