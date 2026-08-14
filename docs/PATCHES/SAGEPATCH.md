@@ -6,6 +6,10 @@ GenTool, it ships as a separate shared library that is loaded via the platform's
 preload mechanism plus a small `GameData` INI override that the engine picks up
 at startup.
 
+This page describes the separate SagePatch library only. The CNC Generals for
+iOS/macOS fork also has a source-integrated Extras panel and measured FPS readout;
+those core-engine features are not implemented by SagePatch.
+
 ## Platform support
 
 | Platform | Mechanism | Status |
@@ -42,17 +46,18 @@ also reach the game.
 
 ### About FPS counters
 
-The engine already ships a native FPS overlay at the top-left
+The upstream engine already ships a debug FPS overlay at the top-left
 (`W3DDisplay::drawFPSStats()`), gated by `#ifdef RTS_DEBUG` plus the runtime
 `-benchmark <seconds>` CLI flag. SagePatch does not duplicate it. An earlier
 revision of this patch defaulted `DXVK_HUD=fps` in the run wrapper as a
 release-build alternative, but on macOS 26 the current MoltenVK SPIRV-Cross
 back-end cannot translate DXVK's HUD pipeline shader (uses `DrawIndex`, no
 MSL equivalent), causing the swap-chain blit pipeline to fail and the game
-to hang at the EA logo. The default is now `DXVK_HUD=0` again. Users who
-want a frame counter on macOS should either build with `RTS_DEBUG=ON` and
-launch with `-benchmark 9999`, or set `DXVK_HUD=fps` themselves once
-upstream MoltenVK ships the DrawIndex emulation patch.
+to hang at the EA logo. The default is now `DXVK_HUD=0` again. The personal
+fork's source-integrated Extras panel can show measured FPS in normal builds;
+other GeneralsX users can build with `RTS_DEBUG=ON` and launch with
+`-benchmark 9999`, or try `DXVK_HUD=fps` only after the relevant MoltenVK
+limitation is resolved.
 
 ## How to enable
 
@@ -160,9 +165,10 @@ By design, SagePatch sticks to **casual** QoL only:
   ranked maps, ladder, GenTool updater)
 - No engine bug fixes — those live in core source, gated by the existing
   `@bugfix` annotation system, contributed upstream where possible
-- No in-game text overlay (clock, match timer, in-game settings menu) — these
-  need a graphics-pipeline hook (D3D8 proxy or Vulkan layer); see the FPS
-  counter via `DXVK_HUD` for an existing alternative
+- No SagePatch-provided in-game text overlay, clock, match timer, or settings
+  menu. A source-integrated fork may implement these in the engine without a
+  graphics-pipeline hook; CNC Generals for iOS/macOS already does this for its
+  Extras panel and measured FPS readout.
 
 ## File layout
 
