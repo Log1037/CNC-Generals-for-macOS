@@ -1,5 +1,5 @@
-name: Feature request / 功能建议
-description: Suggest a focused play-experience improvement / 建议一项明确的游玩体验改进
+name: An idea / 有个想法
+description: Share something that might be useful or fun / 分享一个可能实用或好玩的点子
 title: "[Feature] "
 labels:
   - enhancement
@@ -7,58 +7,20 @@ body:
   - type: markdown
     attributes:
       value: |
-        Propose behavior that fits this native fork. References such as Control Bar Pro or GenTool are welcome for explaining the idea, but this project does not copy closed-source code or proprietary assets.
+        Rough ideas are welcome. Links or screenshots from things such as Control Bar Pro or GenTool can help explain the inspiration; they do not need to be formal specifications.
 
-        建议应适合这个原生 fork。可以引用 Control Bar Pro 或 GenTool 来说明想法，但本项目不会复制闭源代码或专有资源。
+        不完整的想法也欢迎。可以用 Control Bar Pro、GenTool 等项目的链接或截图解释灵感，不需要先写成正式需求文档。
 
-  - type: checkboxes
-    id: prerequisites
+  - type: textarea
+    id: idea
     attributes:
-      label: Prerequisites / 提交前确认
-      options:
-        - label: I searched existing issues and did not find the same request. / 我已搜索现有 Issues，没有发现相同建议。
-          required: true
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: Area / 范围
-      options:
-        - Control Bar or HUD / 控制栏或信息显示
-        - Widescreen, camera, or display / 宽屏、镜头或显示
-        - Extras panel or input / Extras 面板或输入
-        - Packaging or setup / 打包或上手流程
-        - iOS / iPadOS experimental work / iOS、iPadOS 实验工作
-        - Other / 其他
+      label: What is the idea? / 想到了什么？
+      description: Describe the useful or fun part in your own words / 用自己的话说说实用或好玩的地方
     validations:
       required: true
 
   - type: textarea
-    id: problem
+    id: context
     attributes:
-      label: User problem / 使用问题
-      description: Describe the real play or setup problem before proposing a solution / 先描述实际游玩或安装中遇到的问题
-    validations:
-      required: true
-
-  - type: textarea
-    id: proposal
-    attributes:
-      label: Proposed behavior / 建议行为
-      description: Describe the smallest useful version and how a player would control or see it / 描述最小可用版本，以及玩家如何操作或看到它
-    validations:
-      required: true
-
-  - type: textarea
-    id: compatibility
-    attributes:
-      label: Compatibility and alternatives / 兼容与替代方案
-      description: Note relevant resolutions, platforms, game modes, mods, prior tools, or alternative approaches / 说明相关分辨率、平台、游戏模式、MOD、既有工具或替代方案
-
-  - type: checkboxes
-    id: assets
-    attributes:
-      label: Licensing / 许可
-      options:
-        - label: This request does not require copying closed-source code or commercial/proprietary assets. / 该建议不要求复制闭源代码或商业、专有资源。
-          required: true
+      label: References or extra thoughts / 参考或补充
+      description: Optional links, screenshots, affected platforms, or anything else / 选填；可以放链接、截图、相关平台或其他补充

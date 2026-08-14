@@ -101,20 +101,19 @@ export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
 
 本地单机辅助功能只面向离线游戏，不用于联机对战。
 
-## 反馈与参与
+## 随便说两句
 
-- 遇到问题前请先搜索 [GitHub Issues](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues)，再使用[错误报告模板](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues/new/choose)。
-- 想补充 Control Bar、宽屏布局、界面信息或其他体验功能，可使用同一入口中的功能建议模板。
-- 请勿上传商业游戏资源、包含游戏资源的 App / IPA、Apple 签名资料或其他私人信息。
-- 准备提交代码前，请阅读[贡献指南](CONTRIBUTING.md)；安全问题请按[安全策略](SECURITY.md)私下报告。
+这首先是一个按自己需要慢慢修改的个人 fork。因为其中一些修复和功能或许也能帮到别人，所以把源码放在这里；它不算成熟发行版，也没有固定的维护计划。
+
+遇到问题、想到什么功能，或者自己改出了一点东西，都可以直接开 [Issue](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues/new/choose) 或 Pull Request。能顺手写明系统版本、分辨率和具体现象就更好了，但不用按正式项目提工单。唯一需要注意的是不要上传商业游戏资源、包含资源的 App / IPA 或私人签名资料。
+
+想一起改代码的话，可以再看一眼这份简短的[参与说明](CONTRIBUTING.md)。
 
 ## 文档
 
 - [macOS 上手指南](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.md)
 - [macOS 构建指南](docs/BUILD/MACOS.md)
 - [二次修改工程日志](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.md)
-- [贡献指南](CONTRIBUTING.md)
-- [安全策略](SECURITY.md)
 - [修改与来源声明](NOTICE.md)
 - [移植工程手册](docs/port/PORTING_PLAYBOOK.md)
 - [移植方法总结](docs/port/PORTING_PATTERNS.md)
