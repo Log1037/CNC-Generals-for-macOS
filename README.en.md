@@ -101,20 +101,19 @@ The launcher supports:
 
 Local helper features are intended for offline single-player use only.
 
-## Feedback and contributions
+## A small personal project
 
-- Search [GitHub Issues](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues) before using the [bug-report form](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues/new/choose).
-- Use the feature-request form at the same entry point for Control Bar, widescreen layout, UI information, or other play-experience ideas.
-- Do not upload commercial game data, an app or IPA containing game data, Apple signing material, or other private information.
-- Read the [contribution guide](CONTRIBUTING.en.md) before submitting code. Report security issues privately under the [security policy](SECURITY.en.md).
+This is first and foremost a personal fork that changes things as they become useful in actual play. The source is public because some of those fixes and features may help somebody else. It is not a polished release and has no formal support or maintenance schedule.
+
+Feel free to open an [Issue](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues/new/choose) or Pull Request if you run into something, have an idea, or make a useful change. An OS version, resolution, and short description are helpful, but there is no need to write a formal ticket. Just do not upload commercial game data, an app or IPA containing it, or private signing material.
+
+There is also a short [contribution note](CONTRIBUTING.en.md) for anyone who wants to change the code.
 
 ## Documentation
 
 - [macOS quick-start guide](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.en.md)
 - [macOS build guide](docs/BUILD/MACOS.en.md)
 - [Customization engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.en.md)
-- [Contribution guide](CONTRIBUTING.en.md)
-- [Security policy](SECURITY.en.md)
 - [Modification and attribution notice](NOTICE.en.md)
 - [Porting playbook](docs/port/PORTING_PLAYBOOK.md)
 - [Porting patterns](docs/port/PORTING_PATTERNS.md)
