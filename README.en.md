@@ -6,7 +6,7 @@
 
 > **Upstream attribution:** This repository is not an independent port made from scratch. Its direct Apple-platform porting base is [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad). **CNC Generals for iOS/macOS** names only the enhancements, fixes, and packaging work added for the maintainer's personal use on top of that upstream project. Please read the upstream README for its complete project description and porting history.
 
-This project runs Command & Conquer: Generals — Zero Hour natively on Apple Silicon Macs, iPhone, and iPad. It is not a Windows emulator: the game engine is compiled directly for ARM64, while the original DirectX 8 renderer reaches Metal through DXVK, Vulkan, and MoltenVK. This fork preserves the upstream work and embeds personal-use features and usability fixes prompted by real play with an Apple Silicon Mac, Chinese game data, and an external-disk installation.
+This project runs Command & Conquer: Generals — Zero Hour natively on Apple Silicon Macs; the direct upstream also provides a native implementation for iPhone and iPad. It is not a Windows emulator: the game engine is compiled directly for ARM64, while the original DirectX 8 renderer reaches Metal through DXVK, Vulkan, and MoltenVK. This fork preserves the upstream work and embeds personal-use features and usability fixes prompted by real play with an Apple Silicon Mac, Chinese game data, and an external-disk installation. macOS is this fork's primary use and validation platform. The iOS and iPadOS build with these personal changes has not yet passed our device testing; that result does not characterize the direct upstream implementation.
 
 > This repository and its GitHub Releases do not include commercial assets from Generals or Zero Hour. You must own and supply a lawful Windows copy of the game data. A personal iPhone or iPad build may bundle game data that you lawfully own into a private IPA; that IPA is for installation on your own devices and is not committed here or distributed publicly.
 
@@ -27,7 +27,7 @@ See the [English engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELO
 | Platform | Status | Notes |
 |---|---|---|
 | Apple Silicon macOS | Primary use platform | Supports local builds, command-line runs, and a double-clickable `.app` |
-| iPhone / iPad | Implemented upstream; fork regression pending | A personal build may bundle owned game data and be installed with your own signing identity |
+| iOS / iPadOS | Implemented upstream; this fork not yet validated successfully | A private build containing this fork's changes can be built, personally signed, and installed, but current testing has not reliably reached gameplay; this is not a verdict on the direct upstream build |
 | Linux | Shared engine retained | The macOS customization still needs broader cross-platform regression testing |
 
 ## Quick start
@@ -46,10 +46,7 @@ GeneralsX Runtime/
 
 The files may come from Steam, EA App, a disc release, The First Decade, The Ultimate Collection, or another lawfully owned Windows installation. The purchase platform is less important than having a complete data set.
 
-For Windows-to-Mac transfer instructions, see:
-
-- [macOS customized-fork quick start](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.en.md)
-- [General game-file guide](docs/HOWTO/GETTING_THE_GAME_FILES.md)
+For instructions covering Steam, EA App, disc, and collection-edition Windows data, see the [macOS customized-fork quick start](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.en.md).
 
 ### 2. Prepare the build environment
 
@@ -104,11 +101,20 @@ The launcher supports:
 
 Local helper features are intended for offline single-player use only.
 
+## Feedback and contributions
+
+- Search [GitHub Issues](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues) before using the [bug-report form](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues/new/choose).
+- Use the feature-request form at the same entry point for Control Bar, widescreen layout, UI information, or other play-experience ideas.
+- Do not upload commercial game data, an app or IPA containing game data, Apple signing material, or other private information.
+- Read the [contribution guide](CONTRIBUTING.en.md) before submitting code. Report security issues privately under the [security policy](SECURITY.en.md).
+
 ## Documentation
 
 - [macOS quick-start guide](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.en.md)
 - [macOS build guide](docs/BUILD/MACOS.en.md)
 - [Customization engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.en.md)
+- [Contribution guide](CONTRIBUTING.en.md)
+- [Security policy](SECURITY.en.md)
 - [Modification and attribution notice](NOTICE.en.md)
 - [Porting playbook](docs/port/PORTING_PLAYBOOK.md)
 - [Porting patterns](docs/port/PORTING_PATTERNS.md)

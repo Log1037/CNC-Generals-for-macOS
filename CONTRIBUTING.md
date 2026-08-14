@@ -1,169 +1,49 @@
-# How to contribute as a developer
+# 贡献指南
 
-To contribute, fork this repository to create your own copy that you can clone locally and push back to. You can use your fork to create pull requests for your code to be merged into this repository.
+[中文](CONTRIBUTING.md) | [English](CONTRIBUTING.en.md)
 
+感谢你愿意改进 CNC Generals for iOS/macOS。本仓库是
+[`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)
+的个人增强分支；请把改动限制在可以解释、验证和长期维护的范围内。
 
-## Contribution guidelines
+## 先报告，再动手
 
-Prefer opening fewer high quality Pull Requests over many low quality ones. Prioritize polishing existing Pull Requests instead of creating new ones. Do not open Pull Requests as draft unless there are specific requirements that justify it, because draft Pull Requests are generally not looked at and pollute the Pull Request section.
+- 先搜索现有 [Issues](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues)。
+- 可复现的错误请使用错误报告模板；体验建议请使用功能建议模板。
+- 准备较大的代码修改前，先开 Issue 说明使用场景、预期行为和大致边界。
+- 如果问题在没有本 fork 修改的直接上游中同样存在，请在报告中明确说明；不要同时向多个仓库提交完全相同、互不关联的报告。
 
+## 报告中应包含什么
 
-## AI code generation guidelines
+- 使用的 commit 或分支；
+- 平台、设备型号和系统版本；
+- 窗口 / 全屏、分辨率、Retina / HiDPI 和界面比例等相关设置；
+- 游戏版本、语言以及是否使用非官方修复、地图或 MOD；
+- 最短复现步骤、预期结果和实际结果；
+- 已经移除账号、用户名、签名 Team ID 和私人路径的日志。
 
-Creating changes with LLM generated code is generally allowed. The author is responsible for verifying that all generated code is human readable, maintainable and logically correct. Furthermore, all generated code needs to be tested and verified. The author is not allowed to outsource the polishing of the generated code to the human code reviewers. In a Pull Request, generated code needs to be announced as such and to what extent it was polished by human intervention.
+请勿上传 `.big`、视频、语音、地图等商业游戏资源，也不要上传包含这些资源的
+`.app` 或 `.ipa`。Apple 证书、描述文件、设备 UDID 和账号信息也必须留在本地。
 
-### New code contributors and AI generated code
+## Pull Request
 
-New contributors are discouraged from submitting Pull Requests with thousands of lines changed or added with the help of LLMs, because human code reviewers cannot attend such volumes at the risk of wasting precious time with potentially poorly generated code.
+1. 从本仓库 `main` 创建独立分支，一次只处理一个清晰问题。
+2. 阅读根目录 [AGENTS.md](AGENTS.md) 以及它链接的构建、代码和提交规范。
+3. 保持 Zero Hour 优先；只有明确属于共享平台层的低风险修改才同步到原版《将军》。
+4. 用户可见的代码修改使用项目规定的 `GeneralsX @keyword` 注释，并更新当月开发日志。
+5. 使用 Conventional Commits 风格的提交和 PR 标题，并在 PR 中写明动机、影响和验证方法。
+6. 只提交开源源码、配置和文档；不要提交生成的 App、IPA、游戏资源、本机路径或签名资料。
 
+AI 辅助代码可以接受，但提交者仍需逐行检查、整理并亲自验证。不要把未经审阅的大规模生成代码交给维护者代为收尾。
 
-## Code guidelines
+## 验证边界
 
-### Scope of code changes
+- **macOS：** 当前主要使用平台。至少说明构建结果，以及窗口化 / 全屏、相关界面或实际游戏路径是否手动验证。
+- **iOS / iPadOS：** 本 fork 加入个人修改后的版本仍在实验阶段。构建、签名、安装和启动是不同层级；只有真机观察到的内容才能写成已验证。这一测试边界不用于评价直接上游版本。
+- **Linux：** 共享引擎仍需保持可构建。macOS 专用行为必须留在平台层，并明确说明未完成的 Linux 回归。
 
-Code edits only touch the lines of code that serve the intended goal of the change. Big refactors should not be combined with logical changes, because these can become very difficult to review. If a change requires a refactor, create a commit for the refactor before (or after) creating a commit for the change. A Pull Request can contain multiple commits and can be merged with **Rebase and Merge** if these commits are meant to be preserved on the main branch. Otherwise, method of merging will be **Squash and Merge**.
+渲染帧率、逻辑速度或游戏逻辑的修改还必须考虑录像兼容和确定性。候选修复与玩家已经确认的修复应在 PR 中分开描述。
 
-### Style of code changes
+## 许可证与来源
 
-Code edits should fit the nearby code in ways that the code style reads consistent, unless the original code style is bad. The original game code uses c++98, or a deviation thereof, and is simple to read. Prefer not to use newer language features unless required to implement the desired change. Prefer to use newer language features when they are considerably more robust or make the code easier to understand or maintain.
-
-### Language style guide
-
-*Work in progress. Needs a maintainer. Can be built upon existing Code guidelines, such as the "Google C++ Style Guide".*
-
-### Precedence of code changes
-
-Changes to Zero Hour take precedence over Generals, if applicable. When the changed code is not shared by both titles, then the change needs to be created for Zero Hour first, and then recreated for Generals. The implementation of a change for both titles needs to be identical or as close as possible. Preferably the Generals replica of a change comes with the same Pull Request. The Generals replica can be created after the Zero Hour code review has finished.
-
-
-## Change documentation
-
-User facing changes need to be documented in code, Pull Requests and change logs. All documentation ideally is written in the present tense, and not the past.
-
-Good:
-
-> Fixes particle effect of USA Missile Defender
-
-Bad:
-
-> Fixed particle effect of USA Missile Defender
-
-When a text refers to a faction unit, structure, upgrade or similar, then the unit should be worded without any abbrevations and should be prefixed with the faction name. Valid faction names are USA, China, GLA, Boss, Civilian. Subfaction names can be appended too, for example GLA Stealth.
-
-Good:
-
-> Fixes particle effect of USA Missile Defender
-
-Bad:
-
-> Fixes particle effect of MD
-
-
-### Code documentation
-
-User facing changes need to be accompanied by comment(s) where the change is made. Maintenance related changes, such as compilation fixes, typically do not need commenting, unless the next reader can benefit from a special explanation. The comment can be put at the begin of the changed file, class, function or block. It must be clear from the change description what has changed.
-
-The expected comment format is
-
-```
-// GeneralsX @keyword author DD/MM/YYYY A meaningful description for this change.
-```
-
-The `GeneralsX` word and `@keyword` are mandatory. `author` and date can be omitted when preferred.
-
-| Keyword          | Use-case                                                    |
-|------------------|-------------------------------------------------------------|
-| @bugfix          | Fixes a bug                                                 |
-| @fix             | Fixes something, but is not a user facing bug               |
-| @build           | Addresses a compile warning or error                        |
-| @feature         | Adds something new                                          |
-| @performance     | Improves performance                                        |
-| @refactor        | Moves or rewrites code, but does not change the behaviour   |
-| @tweak           | Changes values or settings                                  |
-| @info            | Writes useful information for the next reader               |
-| @todo            | Adds a note for something left to do if really necessary    |
-
-Block comment sample
-
-```
-    // GeneralsX @bugfix JAJames 17/03/2025 Fix uninitialized memory access and add more Windows versions.
-    memset(&os_info,0,sizeof(os_info));
-```
-
-Optionally, the pull request number can be appended to the comment. This can only be done after the pull request has been created.
-
-```
-// GeneralsX @bugfix JAJames 17/03/2025 Fix uninitialized memory access and add more Windows versions. (#123)
-```
-
-### Pull request documentation
-
-The title of a new Pull Request, and/or commit(s) within, begins with a [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) tag. The tag is followed by a concise and descriptive sentence about the change and/or commit, beginning with an upper case letter and ending without a dot. The sentence ideally begins with a word that describes the action that the change takes, for example `Fix *this*`, `Change *that*`, `Add *those*`, `Refactor *thing*`.
-
-Allowed (extended) commit title types are:
-```
-bugfix:
-build:
-chore:
-ci:
-docs:
-fix:
-feat:
-perf:
-refactor:
-revert:
-style:
-test:
-tweak:
-unify:
-```
-
-For the optional scope behind the type pick a suitable word that describes the overall area that the change touches.
-
-Good:
-```
-bugfix(system): Fix uninitialized memory access in Get_OS_Info
-```
-
-Bad:
-```
-Minimal changes for successful build.
-```
-
-If the Pull Request is meant to be merged with rebase, then a note for **Merge with Rebase** should be added to the top of the text body, to help identify the correct merge action when it is ready for merge. All commits of the Pull Request need to be properly named and need the number of the Pull Request added as a suffix in parentheses. Example: **(#333)**. All commits need to be able to compile on their own without dependencies in newer commits of the same Pull Request. Prefer to create changes for **Squash and Merge**, as this will simplify things.
-
-The text body begins with links to related issue report(s) and/or Pull Request(s) if applicable.
-
-To write a link use the following format:
-
-```
-* Fixes #222
-* Closes #333
-* Relates to #555
-* Follow up for #666
-```
-
-Links are commonly used for
-
-* closing a related issue report or task when this pull request is merged
-* closing another pull request when this pull request is merged
-
-Some keywords are interpreted by GitHub. Read about it [here](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue).
-
-The text body continues with a description of the change in appropriate detail. This serves to educate reviewers and visitors to get a good understanding of the change without the need to study and understand the associated changed files. If the change is controversial or affects gameplay in a considerable way, then a rationale text needs to be appended. The rationale explains why the given change makes sense.
-
-
-### Pull request merging rules
-
-Please be mindful when merging changes. There are pitfalls in regards to the commit title consistency.
-
-When attempting to **Squash and Merge** a Pull Request that contains a single commit, then GitHub will default generate a commit title from that single commit. Typically this is undesired, when the new commit title is meant to be kept in sync with the Pull Request title rather than the Pull Request commit title. The generated commit title may need to be adjusted before merging the Pull Request.
-
-When attempting to **Squash and Merge** a Pull Request that contains multiple commits, the GitHub will default generate a commit title from the Pull Request title. Additionally it will generate a commit description from the multiple commits that are part of the Pull Request. The generated commit description generally needs to be cleared before merging the Pull Request to keep the commit title clean.
-
-When attempting to **Rebase and Merge** a Pull Request, then all commits will transfer with the same names to the main branch. Verify that all commit titles are properly crafted, with tags where applicable, trailing Pull Request numbers in parentheses and no unnecessary commit descriptions (texts below the commit title).
-
-
-### Change log documentation
-
-*Work in progress.*
+提交即表示你的改动可以依照本仓库的 [GPLv3 许可证和 EA 附加条款](LICENSE.md)分发。请保留原作者和上游来源，不要复制闭源插件、商业素材或许可证不明的资源。
