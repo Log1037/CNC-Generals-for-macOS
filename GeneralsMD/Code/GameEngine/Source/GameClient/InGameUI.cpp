@@ -3941,7 +3941,7 @@ void InGameUI::postDraw()
                         TheEva->setShouldPlay(EVA_SuperweaponReady_Enemy_Nuke);
                       }
                     }
-                    else if (type == SPECIAL_SCUD_STORM)
+                    else if (type == SPECIAL_SCUD_STORM || type == SPECIAL_TOMAHAWK_STORM)
                     {
                       if ( localPlayer == owningObject->getControllingPlayer() )
                       {

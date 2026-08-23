@@ -128,6 +128,7 @@ const char* const SpecialPowerMaskType::s_bitNameList[] =
 	"SUPW_SPECIAL_NEUTRON_MISSILE",
 
 	"SPECIAL_BATTLESHIP_BOMBARDMENT",
+	"SPECIAL_TOMAHAWK_STORM",
 
 	nullptr
 };

@@ -1397,6 +1397,31 @@ void Drawable::applyPhysicsXform(Matrix3D* mtx)
 			calcPhysicsXform(*m_physicsXform);
 		}
 
+		// AVTomahawk_M is authored with its nose along local +X (ENGINE01 is
+		// at local -X).  During the SCUD-style terminal dive, point that axis
+		// directly along the real physics velocity.  An additive pitch is not
+		// sufficient here because it depends on the object's existing yaw/pitch
+		// basis and can leave the model visibly crossing its flight path.
+		// This only changes the client render matrix; gameplay position and
+		// trajectory remain untouched.
+		if (m_object && m_object->getTemplate()->getName().compareNoCase("ProGen_TomahawkStormMissile") == 0)
+		{
+			const PhysicsBehavior* physics = m_object->getPhysics();
+			if (physics)
+			{
+				const Coord3D* vel = physics->getVelocity();
+				const Real speedSq = sqr(vel->x) + sqr(vel->y) + sqr(vel->z);
+				if (vel->z < -0.01f && speedSq > 0.0001f)
+				{
+					Vector3 pos(mtx->Get_X_Translation(), mtx->Get_Y_Translation(), mtx->Get_Z_Translation());
+					Vector3 dir(vel->x, vel->y, vel->z);
+					dir.Normalize();
+					mtx->buildTransformMatrix(pos, dir);
+					return;
+				}
+			}
+		}
+
 		mtx->Translate(0.0f, 0.0f, m_physicsXform->m_totalZ);
 		mtx->Rotate_Y( m_physicsXform->m_totalPitch );
 		mtx->Rotate_X( -m_physicsXform->m_totalRoll );
@@ -5701,4 +5726,3 @@ void TintEnvelope::loadPostProcess()
 {
 
 }
-

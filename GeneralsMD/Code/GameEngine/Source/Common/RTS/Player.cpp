@@ -1730,7 +1730,8 @@ void Player::onStructureConstructionComplete( Object *builder, Object *structure
     }
   }
 
-	if (structure->hasSpecialPower(SPECIAL_SCUD_STORM))
+	if (structure->hasSpecialPower(SPECIAL_SCUD_STORM) ||
+			structure->hasSpecialPower(SPECIAL_TOMAHAWK_STORM))
   {
     if ( localPlayer == structure->getControllingPlayer() )
     {
@@ -4623,4 +4624,3 @@ void Player::loadPostProcess()
 {
 
 }
-

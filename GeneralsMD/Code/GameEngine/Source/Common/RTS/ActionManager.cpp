@@ -1535,6 +1535,7 @@ Bool ActionManager::canDoSpecialPowerAtLocation( const Object *obj, const Coord3
 			case NUKE_SPECIAL_NEUTRON_MISSILE:
 			case SUPW_SPECIAL_NEUTRON_MISSILE:
 			case SPECIAL_SCUD_STORM:
+			case SPECIAL_TOMAHAWK_STORM:
 #ifdef ALLOW_DEMORALIZE
 			case SPECIAL_DEMORALIZE:
 #endif
@@ -1807,6 +1808,7 @@ Bool ActionManager::canDoSpecialPowerAtObject( const Object *obj, const Object *
 			case SPECIAL_SPY_DRONE:
 			case SPECIAL_RADAR_VAN_SCAN:
 			case SPECIAL_SCUD_STORM:
+			case SPECIAL_TOMAHAWK_STORM:
 			case SPECIAL_A10_THUNDERBOLT_STRIKE:
 			case AIRF_SPECIAL_A10_THUNDERBOLT_STRIKE:
       case SPECIAL_SPECTRE_GUNSHIP:
@@ -1936,6 +1938,7 @@ Bool ActionManager::canDoSpecialPower( const Object *obj, const SpecialPowerTemp
 			case SPECIAL_RADAR_VAN_SCAN:
 			case SPECIAL_TIMED_CHARGES:
 			case SPECIAL_SCUD_STORM:
+			case SPECIAL_TOMAHAWK_STORM:
 			case SPECIAL_A10_THUNDERBOLT_STRIKE:
 			case AIRF_SPECIAL_A10_THUNDERBOLT_STRIKE:
       case SPECIAL_SPECTRE_GUNSHIP:

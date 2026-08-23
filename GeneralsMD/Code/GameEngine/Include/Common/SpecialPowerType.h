@@ -126,6 +126,7 @@ enum SpecialPowerType CPP_11(: Int)
 	SUPW_SPECIAL_NEUTRON_MISSILE,
 
 	SPECIAL_BATTLESHIP_BOMBARDMENT,
+	SPECIAL_TOMAHAWK_STORM,
 
 	SPECIALPOWER_COUNT,
 	// don't forget to add new strings to SpecialPowerMaskType::s_bitNameList[]
