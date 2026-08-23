@@ -15,9 +15,25 @@ The ProGen branch is intended for a local ProGen setup. It keeps ProGen-specific
 packages and fixes separate from the shared/original branch so the common macOS
 engine work can remain usable without ProGen-only gameplay data.
 
+## Published branch layout
+
+- `main` contains the original Zero Hour/shared macOS source changes and the
+  common mod overlays used by that setup.
+- `progen` starts from `main` and adds ProGen-only source changes and packages.
+- Retail archives such as `INIZH.big`, audio, textures, maps, and other base-game
+  data remain external and are never part of either branch.
+
+The tracked `.big` files are mod packages or small local compatibility overlays.
+They are committed so the exact tested load set can be reconstructed; their
+presence does not change the ownership or licensing of the underlying projects.
+
 Thanks to the ProGen mod authors and maintainers for the ProGen gameplay and
 asset work used by the local ProGen setup. Thanks also to GenTool and its
 included Control Bar Pro work, which this local setup uses and adapts for the
 macOS/GeneralsX runtime. The changes in this fork should be read as local
 compatibility fixes and personal adjustments around those projects, not as a
 claim of authorship over them.
+
+The repository also carries local overlays or selected files used alongside
+Expanded LAN Lobby Menu, DecalsZH, and Boss AI packages. Those names identify
+the local load set and are not claims that this fork created the original mods.

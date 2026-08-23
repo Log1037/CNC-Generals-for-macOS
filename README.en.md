@@ -1,14 +1,23 @@
-# CNC Generals for iOS/macOS
+# CNC Generals for macOS
 
 [中文](README.md) | [English](README.en.md)
 
 <img width="500" height="281" alt="Zero Hour running on an Apple platform" src="https://github.com/user-attachments/assets/aeaf6692-36e6-40c8-b9f8-8066d014ec4b" />
 
-> **Upstream attribution:** This repository is not an independent port made from scratch. Its direct Apple-platform porting base is [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad). **CNC Generals for iOS/macOS** names only the enhancements, fixes, and packaging work added for the maintainer's personal use on top of that upstream project. Please read the upstream README for its complete project description and porting history.
+> **Upstream attribution:** This repository is not an independent port made from scratch. Its direct Apple-platform porting base is [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad). **CNC Generals for macOS** names only the enhancements, fixes, and packaging work added for the maintainer's personal use on top of that upstream project. Please read the upstream README for its complete project description and porting history.
 
-This project runs Command & Conquer: Generals — Zero Hour natively on Apple Silicon Macs; the direct upstream also provides a native implementation for iPhone and iPad. It is not a Windows emulator: the game engine is compiled directly for ARM64, while the original DirectX 8 renderer reaches Metal through DXVK, Vulkan, and MoltenVK. This fork preserves the upstream work and embeds personal-use features and usability fixes prompted by real play with an Apple Silicon Mac, Chinese game data, and an external-disk installation. macOS is this fork's primary use and validation platform. The iOS and iPadOS build with these personal changes has not yet passed our device testing; that result does not characterize the direct upstream implementation.
+This project runs Command & Conquer: Generals — Zero Hour natively on Apple Silicon Macs. It is not a Windows emulator: the game engine is compiled directly for ARM64, while the original DirectX 8 renderer reaches Metal through DXVK, Vulkan, and MoltenVK. This fork adds bug fixes, compatibility work, and a smaller set of personal play-comfort adjustments prompted by real use with an Apple Silicon Mac, Chinese game data, and an external-disk installation. macOS is now the only actively developed target. The iOS and iPadOS code remains in the repository, but this fork no longer advances or validates it; this does not characterize the direct upstream implementation.
 
-> This repository and its GitHub Releases do not include commercial assets from Generals or Zero Hour. You must own and supply a lawful Windows copy of the game data. A personal iPhone or iPad build may bundle game data that you lawfully own into a private IPA; that IPA is for installation on your own devices and is not committed here or distributed publicly.
+> This repository and its GitHub Releases do not include commercial assets from Generals or Zero Hour. You must own and supply a lawful Windows copy of the game data. Tracked `.big` files are community mods and local compatibility overlays used by this setup, not retail game data.
+
+## Release branches
+
+| Branch | Purpose | Scope |
+|---|---|---|
+| [`main`](https://github.com/Log1037/CNC-Generals-for-macOS/tree/main) | Original Zero Hour and shared improvements | macOS engine fixes, UI scaling, Control Bar layout, shortcut-bar behavior, and shared mod overlays |
+| [`progen`](https://github.com/Log1037/CNC-Generals-for-macOS/tree/progen) | ProGen 26 edition | Extends `main` with ProGen-only source changes, Tomahawk Storm support, the Laser Comanche fix, and the ProGen mod set |
+
+`progen` is an additive branch based on `main`; neither branch contains the retail game. See [Mod scope and credits](docs/MOD_SCOPE_AND_CREDITS.md) for the file boundary and acknowledgements.
 
 ## What this fork adds
 
@@ -27,7 +36,7 @@ See the [English engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELO
 | Platform | Status | Notes |
 |---|---|---|
 | Apple Silicon macOS | Primary use platform | Supports local builds, command-line runs, and a double-clickable `.app` |
-| iOS / iPadOS | Implemented upstream; this fork not yet validated successfully | A private build containing this fork's changes can be built, personally signed, and installed, but current testing has not reliably reached gameplay; this is not a verdict on the direct upstream build |
+| iOS / iPadOS | Paused in this fork | Existing upstream and local code is retained, but this fork no longer develops, releases, or validates it; this is not a verdict on the direct upstream build |
 | Linux | Shared engine retained | The macOS customization still needs broader cross-platform regression testing |
 
 ## Quick start
@@ -62,8 +71,8 @@ Install the Vulkan SDK from LunarG; Homebrew Vulkan headers alone are not suffic
 ### 3. Clone, build, and deploy
 
 ```bash
-git clone https://github.com/Log1037/CNC-Generals-for-iOS-macOS.git
-cd CNC-Generals-for-iOS-macOS
+git clone https://github.com/Log1037/CNC-Generals-for-macOS.git
+cd CNC-Generals-for-macOS
 
 export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
 ./scripts/build/macos/build-macos-zh.sh
@@ -105,7 +114,7 @@ Local helper features are intended for offline single-player use only.
 
 This is first and foremost a personal fork that changes things as they become useful in actual play. The source is public because some of those fixes and features may help somebody else. It is not a polished release and has no formal support or maintenance schedule.
 
-Feel free to open an [Issue](https://github.com/Log1037/CNC-Generals-for-iOS-macOS/issues/new/choose) or Pull Request if you run into something, have an idea, or make a useful change. An OS version, resolution, and short description are helpful, but there is no need to write a formal ticket. Just do not upload commercial game data, an app or IPA containing it, or private signing material.
+Feel free to open an [Issue](https://github.com/Log1037/CNC-Generals-for-macOS/issues/new/choose) or Pull Request if you run into something, have an idea, or make a useful change. An OS version, resolution, and short description are helpful, but there is no need to write a formal ticket. Just do not upload commercial game data, an app containing it, or private signing material.
 
 There is also a short [contribution note](CONTRIBUTING.en.md) for anyone who wants to change the code.
 
@@ -114,6 +123,7 @@ There is also a short [contribution note](CONTRIBUTING.en.md) for anyone who wan
 - [macOS quick-start guide](docs/HOWTO/MACOS_LOCAL_FORK_QUICK_START.en.md)
 - [macOS build guide](docs/BUILD/MACOS.en.md)
 - [Customization engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.en.md)
+- [Mod scope and credits](docs/MOD_SCOPE_AND_CREDITS.md)
 - [Modification and attribution notice](NOTICE.en.md)
 - [Porting playbook](docs/port/PORTING_PLAYBOOK.md)
 - [Porting patterns](docs/port/PORTING_PATTERNS.md)
@@ -127,12 +137,14 @@ This project builds on:
 - [Fighter19/CnC_Generals_Zero_Hour](https://github.com/Fighter19/CnC_Generals_Zero_Hour)
 - [fbraz3/GeneralsX](https://github.com/fbraz3/GeneralsX)
 - The direct upstream, [ammaarreshi/Generals-Mac-iOS-iPad](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)
+- The ProGen mod authors and maintainers
+- GenTool, including the Control Bar Pro materials used by this local setup
 - DXVK, MoltenVK, SDL3, OpenAL Soft, FFmpeg, Fontconfig, FreeType, and other open-source components
 
 See [NOTICE.en.md](NOTICE.en.md) for the detailed lineage and modification boundary.
 
 ## License and disclaimer
 
-Source is distributed under the repository's [GPLv3 license and EA additional terms](LICENSE.md). Third-party components retain their respective licenses.
+Source is distributed under the repository's [GPLv3 license and EA additional terms](LICENSE.md). Third-party components and mod files retain their respective licenses, notices, and ownership.
 
 This is not an official release by Electronic Arts, Westwood, EA Pacific, or any upstream community project. Game names, story, artwork, audio, maps, and all other commercial assets remain the property of their respective rights holders.
