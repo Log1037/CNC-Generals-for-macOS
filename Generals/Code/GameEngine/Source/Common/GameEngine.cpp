@@ -437,8 +437,8 @@ void GameEngine::init()
 					"  EnforceMaxCameraHeight = No\n"
 					"  ; Keyboard scroll - vanilla 0.5 is sluggish, double it.\n"
 					"  KeyboardScrollSpeedFactor = 1.0\n"
-					"  ; ~5% more terrain drawn at max zoom to fix terrain pop-in.\n"
-					"  TerrainDrawDistanceScale = 1.05\n"
+					"  ; Minimum terrain range. Camera zoom now raises the effective range automatically.\n"
+					"  TerrainDrawDistanceScale = 1.0\n"
 					"End\n"
 				);
 				fclose(f);

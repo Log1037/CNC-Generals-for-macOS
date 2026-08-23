@@ -174,6 +174,11 @@ extern WindowMsgHandledType ExtrasMenuInput( GameWindow *window, UnsignedInt msg
 extern void ToggleExtrasMenu( void );
 extern void CloseExtrasMenu( void );
 extern Bool IsExtrasMenuVisible( void );
+// Run deferred menu work after the input callback that requested it has returned.
+extern void ProcessExtrasMenuDeferredActions( void );
+// Mark a visible dynamically-built panel for a safe rebuild on the next outer tick.
+extern void NotifyExtrasMenuResolutionChanged( void );
+extern void NotifySkirmishGameOptionsResolutionChanged( void );
 
 // Popup host Game Internet -----------------------------------------------------------------------------------
 extern void DifficultySelectInit( WindowLayout *layout, void *userData );

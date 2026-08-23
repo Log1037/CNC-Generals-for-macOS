@@ -267,6 +267,10 @@ public:
 	Int winGetPosition( Int *x, Int *y );  ///< get window position
 	Int winGetScreenPosition( Int *x, Int *y );  ///< get screen coordinates
 	Int winGetRegion( IRegion2D *region );  ///< get window region
+	void winSetScriptLayoutGeometry(const IRegion2D &screenRegion, const ICoord2D &creationResolution,
+		Bool bottomAnchored, Int horizontalGroup, Bool controlBarLayout);
+	Bool winGetScriptLayoutGeometry(IRegion2D *screenRegion, ICoord2D *creationResolution,
+		Bool *bottomAnchored, Int *horizontalGroup, Bool *controlBarLayout) const;
 	Int winSetCursorPosition( Int x, Int y );  ///< set window cursor position
 	Int winGetCursorPosition( Int *x, Int *y );  ///< get window cursor position
 
@@ -400,7 +404,15 @@ protected:
 	Int m_status;      									// Status bits for this window
 	ICoord2D  m_size;						     	  // Width and height of the window
 	IRegion2D m_region;      					  // Current region occupied by window.
-																			// Low x,y is the window's origin
+															// Low x,y is the window's origin
+	// Immutable authored geometry used to reflow the existing Control Bar tree
+	// without recreating stateful windows or invalidating cached pointers.
+	Bool m_hasScriptLayoutGeometry;
+	IRegion2D m_scriptScreenRegion;
+	ICoord2D m_scriptCreationResolution;
+	Bool m_scriptBottomAnchored;
+	Int m_scriptHorizontalGroup;
+	Bool m_scriptControlBarLayout;
 	Int m_cursorX;											// window cursor X position if any
 	Int m_cursorY;											// window cursor Y position if any
 

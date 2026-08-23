@@ -71,6 +71,7 @@ class AIGroup;
 class GameMessage;
 class ResourceGatheringManager;
 class PlayerTemplate;
+class SpecialPowerTemplate;
 class Squad;
 class Team;
 class TeamPrototype;
@@ -288,6 +289,7 @@ public:
 	// Finds a short-cut firing special power of specified type returning the first ready power or
 	// the most ready if none ready.
 	Object* findMostReadyShortcutSpecialPowerOfType( SpecialPowerType spType );
+	Object* findMostReadyShortcutSpecialPower( const SpecialPowerTemplate *spTemplate );
 
 	//Find specified thing template's most ready weapon.
 	Object* findMostReadyShortcutWeaponForThing( const ThingTemplate *thing, UnsignedInt &mostReadyPercentage );
@@ -298,6 +300,7 @@ public:
 
 	// Counts available shortcut special power of specified type that can fire now.
 	Int countReadyShortcutSpecialPowersOfType( SpecialPowerType spType );
+	Int countReadyShortcutSpecialPowers( const SpecialPowerTemplate *spTemplate );
 
 	/// return t if the player has the given science, either intrinsically, via specialization, or via capture.
 	Bool hasScience(ScienceType t) const;

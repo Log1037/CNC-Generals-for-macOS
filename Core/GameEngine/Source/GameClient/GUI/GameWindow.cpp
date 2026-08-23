@@ -90,6 +90,13 @@ GameWindow::GameWindow()
 	m_region.lo.y = 0;
 	m_region.hi.x = 0;
 	m_region.hi.y = 0;
+	m_hasScriptLayoutGeometry = FALSE;
+	m_scriptScreenRegion = m_region;
+	m_scriptCreationResolution.x = 0;
+	m_scriptCreationResolution.y = 0;
+	m_scriptBottomAnchored = FALSE;
+	m_scriptHorizontalGroup = -1;
+	m_scriptControlBarLayout = FALSE;
 
 	m_cursorX = 0;
 	m_cursorY = 0;
@@ -612,6 +619,40 @@ Int GameWindow::winGetRegion( IRegion2D *region )
 
 	return WIN_ERR_OK;
 
+}
+
+// GameWindow::winSetScriptLayoutGeometry =====================================
+// Preserve the authored rectangle separately from the mutable live rectangle.
+//=============================================================================
+void GameWindow::winSetScriptLayoutGeometry(const IRegion2D &screenRegion,
+	const ICoord2D &creationResolution, Bool bottomAnchored, Int horizontalGroup,
+	Bool controlBarLayout)
+{
+	m_hasScriptLayoutGeometry = TRUE;
+	m_scriptScreenRegion = screenRegion;
+	m_scriptCreationResolution = creationResolution;
+	m_scriptBottomAnchored = bottomAnchored;
+	m_scriptHorizontalGroup = horizontalGroup;
+	m_scriptControlBarLayout = controlBarLayout;
+}
+
+Bool GameWindow::winGetScriptLayoutGeometry(IRegion2D *screenRegion,
+	ICoord2D *creationResolution, Bool *bottomAnchored, Int *horizontalGroup,
+	Bool *controlBarLayout) const
+{
+	if (!m_hasScriptLayoutGeometry)
+		return FALSE;
+	if (screenRegion)
+		*screenRegion = m_scriptScreenRegion;
+	if (creationResolution)
+		*creationResolution = m_scriptCreationResolution;
+	if (bottomAnchored)
+		*bottomAnchored = m_scriptBottomAnchored;
+	if (horizontalGroup)
+		*horizontalGroup = m_scriptHorizontalGroup;
+	if (controlBarLayout)
+		*controlBarLayout = m_scriptControlBarLayout;
+	return TRUE;
 }
 
 // GameWindow::winPointInWindow ===============================================

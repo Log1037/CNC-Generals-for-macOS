@@ -1432,7 +1432,7 @@ void InGameUI::setRadiusCursor(RadiusCursorType cursorType, const SpecialPowerTe
 	{
 		if( ThePlayerList && ThePlayerList->getLocalPlayer() && specPowTempl != nullptr )
 		{
-			obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPowerOfType( specPowTempl->getSpecialPowerType() );
+			obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPower( specPowTempl );
 		}
 	}
 	else
@@ -5981,8 +5981,57 @@ void InGameUI::recreateControlBar()
 	TheControlBar->init();
 }
 
+void InGameUI::relayoutControlBar()
+{
+	extern void GeneralsX_ReflowNonControlBarWindows(void);
+	extern void GeneralsX_ReflowControlBarWindows(void);
+	GeneralsX_ReflowNonControlBarWindows();
+	GeneralsX_ReflowControlBarWindows();
+
+	// The hidden menu/movie bar needs geometry only. A live match additionally
+	// reapplies its current scheme without changing the ControlBar's identity.
+	if (TheControlBar && TheGameLogic && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame())
+		TheControlBar->onResolutionChanged();
+}
+
 void InGameUI::refreshCustomUiResources()
 {
+	// These strings survive display resets. Refresh their font objects as well
+	// as their proportional anchors, otherwise a point-for-point/HiDPI switch
+	// combines new render coordinates with metrics cached for the old target.
+	for (Int playerIndex = 0; playerIndex < MAX_PLAYER_COUNT; ++playerIndex)
+	{
+		for (SuperweaponMap::iterator mapIt = m_superweapons[playerIndex].begin();
+			mapIt != m_superweapons[playerIndex].end(); ++mapIt)
+		{
+			for (SuperweaponList::iterator listIt = mapIt->second.begin();
+				listIt != mapIt->second.end(); ++listIt)
+			{
+				SuperweaponInfo *info = *listIt;
+				if (!info)
+					continue;
+				if (info->m_ready)
+					info->setFont(m_superweaponReadyFont, m_superweaponReadyPointSize, m_superweaponReadyBold);
+				else
+					info->setFont(m_superweaponNormalFont, m_superweaponNormalPointSize, m_superweaponNormalBold);
+				info->m_forceUpdateText = TRUE;
+			}
+		}
+	}
+
+	for (NamedTimerMapIt timerIt = m_namedTimers.begin(); timerIt != m_namedTimers.end(); ++timerIt)
+	{
+		NamedTimerInfo *info = timerIt->second;
+		if (!info || !info->displayString)
+			continue;
+		const Bool ready = info->isCountdown && info->timestamp == 0;
+		info->displayString->setFont(TheFontLibrary->getFont(
+			ready ? m_namedTimerReadyFont : m_namedTimerNormalFont,
+			TheGlobalLanguageData->adjustFontSize(ready ? m_namedTimerReadyPointSize : m_namedTimerNormalPointSize),
+			ready ? m_namedTimerReadyBold : m_namedTimerNormalBold));
+		info->timestamp = ~0u;
+	}
+
 	refreshNetworkLatencyResources();
 	refreshRenderFpsResources();
 	refreshSystemTimeResources();

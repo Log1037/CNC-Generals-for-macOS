@@ -51,6 +51,7 @@ public:
 
 	/// update method for all our display strings
 	virtual void update() override;
+	virtual void onResolutionChanged() override;
 
 	/// allocate a new display string
 	virtual DisplayString *newDisplayString() override;

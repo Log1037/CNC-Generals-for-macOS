@@ -198,6 +198,8 @@ Bool ProcessAnimateWindowSlideFromRight::updateAnimateWindow( wnd::AnimateWindow
 	if(curPos.x < endPos.x)
 	{
 		curPos.x = endPos.x;
+		win->winSetPosition(curPos.x, curPos.y);
+		animWin->setCurPos(curPos);
 		animWin->setFinished( TRUE );
 		return TRUE;
 	}

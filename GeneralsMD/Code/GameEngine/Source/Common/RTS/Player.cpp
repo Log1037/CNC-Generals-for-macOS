@@ -1193,6 +1193,7 @@ struct PlayerObjectFindInfo
 	Player* player;
 	Object* obj;
 	SpecialPowerType spType;
+	const SpecialPowerTemplate *spTemplate;
 	const ThingTemplate *thing;
 	UnsignedInt lowestReadyFrame;
 	UnsignedInt highestPercentage;
@@ -1246,9 +1247,11 @@ static void doFindSpecialPowerSourceObject( Object *obj, void *userData )
 				return;
 			}
 		}
-		else if( obj->hasSpecialPower( info->spType ) )
+		else if( info->spTemplate != nullptr || obj->hasSpecialPower( info->spType ) )
 		{
-			SpecialPowerModuleInterface *spmInterface = obj->findSpecialPowerModuleInterface( info->spType );
+			SpecialPowerModuleInterface *spmInterface = info->spTemplate != nullptr ?
+				obj->getSpecialPowerModule(info->spTemplate) :
+				obj->findSpecialPowerModuleInterface(info->spType);
 			if( spmInterface && !spmInterface->isScriptOnly() )
 			{
 				UnsignedInt readyFrame = spmInterface->getReadyFrame();
@@ -1296,9 +1299,11 @@ static void doCountSpecialPowersReady( Object *obj, void *userData )
 			&& !obj->testStatus( OBJECT_STATUS_SOLD )
 			&& !obj->isEffectivelyDead() )
 	{
-		if( obj->hasSpecialPower( info->spType ) )
+		if( info->spTemplate != nullptr || obj->hasSpecialPower( info->spType ) )
 		{
-			SpecialPowerModuleInterface *spmInterface = obj->findSpecialPowerModuleInterface( info->spType );
+			SpecialPowerModuleInterface *spmInterface = info->spTemplate != nullptr ?
+				obj->getSpecialPowerModule(info->spTemplate) :
+				obj->findSpecialPowerModuleInterface(info->spType);
 			if( spmInterface && !spmInterface->isScriptOnly() )
 			{
 
@@ -1440,6 +1445,20 @@ Object* Player::findMostReadyShortcutSpecialPowerOfType( SpecialPowerType spType
 	info.player = this;
 	info.obj = nullptr;
 	info.spType = spType;
+	info.spTemplate = nullptr;
+	info.lowestReadyFrame = 0xffffffff;
+	iterateObjects( doFindSpecialPowerSourceObject, &info );
+	return info.obj;
+}
+
+//-------------------------------------------------------------------------------------------------
+Object* Player::findMostReadyShortcutSpecialPower( const SpecialPowerTemplate *spTemplate )
+{
+	PlayerObjectFindInfo info;
+	info.player = this;
+	info.obj = nullptr;
+	info.spType = spTemplate ? spTemplate->getSpecialPowerType() : SPECIAL_INVALID;
+	info.spTemplate = spTemplate;
 	info.lowestReadyFrame = 0xffffffff;
 	iterateObjects( doFindSpecialPowerSourceObject, &info );
 	return info.obj;
@@ -1491,6 +1510,7 @@ Bool Player::hasAnyShortcutSpecialPower()
 	info.player = this;
 	info.obj = nullptr;
 	info.spType = SPECIAL_INVALID; //Invalid dictates that we don't care about the type.
+	info.spTemplate = nullptr;
 	info.lowestReadyFrame = 0xffffffff;
 	iterateObjects( doFindSpecialPowerSourceObject, &info );
 	return info.obj;
@@ -1501,6 +1521,18 @@ Int Player::countReadyShortcutSpecialPowersOfType( SpecialPowerType spType )
 {
 	PlayerObjectFindInfo info;
 	info.spType = spType;
+	info.spTemplate = nullptr;
+	info.numReady = 0;
+	iterateObjects( doCountSpecialPowersReady, &info );
+	return info.numReady;
+}
+
+//-------------------------------------------------------------------------------------------------
+Int Player::countReadyShortcutSpecialPowers( const SpecialPowerTemplate *spTemplate )
+{
+	PlayerObjectFindInfo info;
+	info.spType = spTemplate ? spTemplate->getSpecialPowerType() : SPECIAL_INVALID;
+	info.spTemplate = spTemplate;
 	info.numReady = 0;
 	iterateObjects( doCountSpecialPowersReady, &info );
 	return info.numReady;

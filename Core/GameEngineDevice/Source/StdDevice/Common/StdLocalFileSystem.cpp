@@ -341,7 +341,16 @@ void StdLocalFileSystem::getFileListInDirectory(const AsciiString& currentDirect
 			return;
 		}
 
-		AsciiString newFilename(entry.path().string().c_str());
+		std::string listedPath = entry.path().string();
+#ifndef _WIN32
+		// The archive file system exposes virtual paths with Windows separators.
+		// Keep local directory results in the same canonical form so FilenameList's
+		// case-insensitive set can suppress a loose-file/archive duplicate.  Without
+		// this, "Data/INI/Object/Foo.ini" and "Data\\INI\\Object\\foo.ini" are
+		// treated as two files and the same loose INI is parsed twice on macOS.
+		std::replace(listedPath.begin(), listedPath.end(), '/', '\\');
+#endif
+		AsciiString newFilename(listedPath.c_str());
 		filenameList.insert(newFilename);
 	};
 

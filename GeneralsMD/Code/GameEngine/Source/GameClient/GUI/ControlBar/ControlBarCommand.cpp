@@ -1015,7 +1015,7 @@ CommandAvailability ControlBar::getCommandAvailability( const CommandButton *com
 			|| command->getCommandType() == GUI_COMMAND_SPECIAL_POWER_CONSTRUCT_FROM_SHORTCUT )
 	{
 		if (ThePlayerList && ThePlayerList->getLocalPlayer())
-			obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPowerOfType( command->getSpecialPowerTemplate()->getSpecialPowerType() );
+			obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPower( command->getSpecialPowerTemplate() );
 		else
 			obj = nullptr;
 	}
@@ -1527,4 +1527,3 @@ CommandAvailability ControlBar::getCommandAvailability( const CommandButton *com
 	return COMMAND_AVAILABLE;
 
 }
-

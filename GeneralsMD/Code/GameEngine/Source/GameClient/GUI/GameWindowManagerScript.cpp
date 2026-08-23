@@ -47,6 +47,8 @@
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include <map>
+
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Lib/BaseType.h"
 #include "Common/Debug.h"
@@ -123,6 +125,63 @@ static AsciiString theSystemString;
 static AsciiString theInputString;
 static AsciiString theTooltipString;
 static AsciiString theDrawString;
+// GeneralsX @bugfix Codex 23/08/2026 Anchor both official Control Bar Pro design canvases independently.
+static Bool useUniformLayoutScale = FALSE;
+static Bool useControlBarProAnchoredLayout = FALSE;
+static Bool useLegacyShortcutBarAnchor = FALSE;
+static const Int CONTROL_BAR_PRO_BASE_WIDTH = 1920;
+static const Real CONTROL_BAR_PRO_LEFT_GROUP_LIMIT = 400.0f / CONTROL_BAR_PRO_BASE_WIDTH;
+static const Real CONTROL_BAR_PRO_RIGHT_GROUP_LIMIT = 1500.0f / CONTROL_BAR_PRO_BASE_WIDTH;
+
+static Bool isControlBarProCreationResolution(const ICoord2D &createRes)
+{
+	return (createRes.x == 1920 && createRes.y == 1080) ||
+		(createRes.x == 3840 && createRes.y == 2160) ||
+		(useLegacyShortcutBarAnchor && createRes.x == 800 && createRes.y == 600);
+}
+
+enum ControlBarProLayoutGroup
+{
+	CONTROL_BAR_PRO_GROUP_NONE = -1,
+	CONTROL_BAR_PRO_GROUP_FULL_WIDTH,
+	CONTROL_BAR_PRO_GROUP_LEFT,
+	CONTROL_BAR_PRO_GROUP_CENTER,
+	CONTROL_BAR_PRO_GROUP_RIGHT
+};
+
+static Int currentControlBarProLayoutGroup = CONTROL_BAR_PRO_GROUP_NONE;
+static std::map<GameWindow *, Int> controlBarProLayoutGroups;
+static IRegion2D currentAuthoredScreenRegion;
+static ICoord2D currentAuthoredCreationResolution;
+static Bool currentAuthoredGeometryTracked = FALSE;
+static Bool currentAuthoredBottomAnchored = FALSE;
+static Bool currentAuthoredControlBarLayout = FALSE;
+
+class ScopedUniformLayoutScale
+{
+public:
+	explicit ScopedUniformLayoutScale(Bool enable, Bool controlBarProAnchored, Bool legacyShortcutBarAnchor) :
+		m_previous(useUniformLayoutScale),
+		m_previousControlBarProAnchored(useControlBarProAnchoredLayout),
+		m_previousLegacyShortcutBarAnchor(useLegacyShortcutBarAnchor)
+	{
+		useUniformLayoutScale = enable;
+		useControlBarProAnchoredLayout = controlBarProAnchored;
+		useLegacyShortcutBarAnchor = legacyShortcutBarAnchor;
+	}
+
+	~ScopedUniformLayoutScale()
+	{
+		useUniformLayoutScale = m_previous;
+		useControlBarProAnchoredLayout = m_previousControlBarProAnchored;
+		useLegacyShortcutBarAnchor = m_previousLegacyShortcutBarAnchor;
+	}
+
+private:
+	Bool m_previous;
+	Bool m_previousControlBarProAnchored;
+	Bool m_previousLegacyShortcutBarAnchor;
+};
 
 // default visual properties
 static Color defEnabledColor		= 0;
@@ -502,6 +561,10 @@ static Bool parseScreenRect( const char *token, char *buffer,
 	ICoord2D createRes;  // creation resolution
 	const char *seps = " ,:=\n\r\t";
 	char *c;
+	currentControlBarProLayoutGroup = CONTROL_BAR_PRO_GROUP_NONE;
+	currentAuthoredGeometryTracked = FALSE;
+	currentAuthoredBottomAnchored = FALSE;
+	currentAuthoredControlBarLayout = FALSE;
 
 	c = strtok( nullptr, seps );  // UPPERLEFT token
 	c = strtok( nullptr, seps );  // x position
@@ -520,6 +583,12 @@ static Bool parseScreenRect( const char *token, char *buffer,
 	scanInt( c, createRes.x );
 	c = strtok( nullptr, seps );  // y creation resolution
 	scanInt( c, createRes.y );
+	currentAuthoredScreenRegion = screenRegion;
+	currentAuthoredCreationResolution = createRes;
+	// Preserve every scripted rectangle, then select Shell or Control Bar windows
+	// at reflow time. This lets both states update in place without mixing them.
+	currentAuthoredGeometryTracked = useUniformLayoutScale;
+	currentAuthoredControlBarLayout = useControlBarProAnchoredLayout;
 
 	//
 	// shrink or expand the screen region by the ratio of the current
@@ -527,10 +596,67 @@ static Bool parseScreenRect( const char *token, char *buffer,
 	//
 	Real xScale = (Real)TheDisplay->getWidth() / (Real)createRes.x;
 	Real yScale = (Real)TheDisplay->getHeight() / (Real)createRes.y;
-	screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale);
-	screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * yScale);
-	screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale);
-	screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * yScale);
+	if (useUniformLayoutScale)
+	{
+		const Real uniformScale = xScale < yScale ? xScale : yScale;
+		Real offsetX = ((Real)TheDisplay->getWidth() - (Real)createRes.x * uniformScale) * 0.5f;
+		Real offsetY = ((Real)TheDisplay->getHeight() - (Real)createRes.y * uniformScale) * 0.5f;
+		Bool controlBarFullWidthContainer = FALSE;
+
+		// Control Bar Pro is authored as three independent horizontal groups.
+		// Keep the left group screen-left, the right group screen-right, and
+		// keep the command group centered in the remaining space.  The vertical
+		// anchor is the bottom edge so the bar never gets cropped on tall screens.
+		if (useControlBarProAnchoredLayout && isControlBarProCreationResolution(createRes))
+		{
+			currentAuthoredBottomAnchored = TRUE;
+			const Real horizontalSlack = (Real)TheDisplay->getWidth() - (Real)createRes.x * uniformScale;
+			const Bool isFullWidthContainer = screenRegion.lo.x == 0 && screenRegion.hi.x == createRes.x;
+			const Real designCenterX = ((Real)screenRegion.lo.x + (Real)screenRegion.hi.x) * 0.5f;
+			if (isFullWidthContainer)
+			{
+				currentControlBarProLayoutGroup = CONTROL_BAR_PRO_GROUP_FULL_WIDTH;
+				controlBarFullWidthContainer = TRUE;
+				screenRegion.lo.x = 0;
+				screenRegion.hi.x = TheDisplay->getWidth();
+			}
+			else
+			{
+				std::map<GameWindow *, Int>::const_iterator parentGroup = controlBarProLayoutGroups.find(parent);
+				if (parentGroup != controlBarProLayoutGroups.end() &&
+					parentGroup->second != CONTROL_BAR_PRO_GROUP_FULL_WIDTH)
+					currentControlBarProLayoutGroup = parentGroup->second;
+				else if (designCenterX / (Real)createRes.x < CONTROL_BAR_PRO_LEFT_GROUP_LIMIT)
+					currentControlBarProLayoutGroup = CONTROL_BAR_PRO_GROUP_LEFT;
+				else if (designCenterX / (Real)createRes.x >= CONTROL_BAR_PRO_RIGHT_GROUP_LIMIT)
+					currentControlBarProLayoutGroup = CONTROL_BAR_PRO_GROUP_RIGHT;
+				else
+					currentControlBarProLayoutGroup = CONTROL_BAR_PRO_GROUP_CENTER;
+
+				if (currentControlBarProLayoutGroup == CONTROL_BAR_PRO_GROUP_LEFT)
+					offsetX = 0.0f;
+				else if (currentControlBarProLayoutGroup == CONTROL_BAR_PRO_GROUP_RIGHT)
+					offsetX = horizontalSlack;
+				else
+					offsetX = horizontalSlack * 0.5f;
+			}
+			offsetY = (Real)TheDisplay->getHeight() - (Real)createRes.y * uniformScale;
+		}
+		if (!controlBarFullWidthContainer)
+		{
+			screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * uniformScale + offsetX);
+			screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * uniformScale + offsetX);
+		}
+		screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * uniformScale + offsetY);
+		screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * uniformScale + offsetY);
+	}
+	else
+	{
+		screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale);
+		screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * yScale);
+		screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale);
+		screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * yScale);
+	}
 
 	//
 	// given the screen region upper left compute the upper left that we
@@ -561,7 +687,6 @@ static Bool parseScreenRect( const char *token, char *buffer,
 	// save our width and height from the adjusted screen region locations
 	*width = screenRegion.hi.x - screenRegion.lo.x;
 	*height = screenRegion.hi.y - screenRegion.lo.y;
-
 	return TRUE;
 
 }
@@ -2140,6 +2265,16 @@ static GameWindow *createWindow( char *type,
 
 	if( window )
 	{
+		if (currentAuthoredGeometryTracked)
+		{
+			window->winSetScriptLayoutGeometry(currentAuthoredScreenRegion,
+				currentAuthoredCreationResolution, currentAuthoredBottomAnchored,
+				currentControlBarProLayoutGroup, currentAuthoredControlBarLayout);
+		}
+		if (currentControlBarProLayoutGroup != CONTROL_BAR_PRO_GROUP_NONE)
+		{
+			controlBarProLayoutGroups[window] = currentControlBarProLayoutGroup;
+		}
 
 		// set any text read from the textLabel
 		setWindowText( window, instData->m_textLabelString );
@@ -2717,8 +2852,24 @@ WindowLayoutInfo::WindowLayoutInfo() :
 	*/
 //=============================================================================
 GameWindow *GameWindowManager::winCreateFromScript( AsciiString filenameString,
-																										WindowLayoutInfo *info )
+																			WindowLayoutInfo *info )
 {
+	// Every .wnd file declares the coordinate system it was authored for in
+	// CREATIONRESOLUTION. Scale that canvas uniformly so both legacy 800x600
+	// HUDs and higher-resolution Control Bar Pro layouts retain their authored
+	// aspect ratio. Window input uses the resulting rectangles, so hit-testing
+	// follows the same transform as drawing.
+	const Bool isShortcutBarScript =
+		filenameString.compareNoCase("GenPowersShortcutBarUS.wnd") == 0 ||
+		filenameString.compareNoCase("GenPowersShortcutBarChina.wnd") == 0 ||
+		filenameString.compareNoCase("GenPowersShortcutBarGLA.wnd") == 0;
+	const Bool isControlBarAuxiliaryScript =
+		filenameString.compareNoCase("GeneralsExpPoints.wnd") == 0 ||
+		filenameString.compareNoCase("ControlBarHelpPopup.wnd") == 0;
+	const Bool isControlBarScript = filenameString.compareNoCase("ControlBar.wnd") == 0 ||
+		isShortcutBarScript || isControlBarAuxiliaryScript;
+	ScopedUniformLayoutScale uniformLayout(TRUE, isControlBarScript, isShortcutBarScript);
+	controlBarProLayoutGroups.clear();
 	const char* filename = filenameString.str();
 	static char buffer[ WIN_BUFFER_LENGTH ]; 		// input buffer for reading
 	GameWindow *firstWindow = nullptr;
@@ -2904,3 +3055,126 @@ GameWindow *GameWindowManager::winCreateFromScript( AsciiString filenameString,
 
 }
 
+enum GeneralsXScriptReflowFilter
+{
+	GENERALSX_REFLOW_ALL,
+	GENERALSX_REFLOW_CONTROL_BAR,
+	GENERALSX_REFLOW_NON_CONTROL_BAR,
+};
+
+static void GeneralsX_ReflowTrackedScriptWindow(GameWindow *window, GeneralsXScriptReflowFilter filter)
+{
+	if (window == nullptr)
+		return;
+
+	IRegion2D authored;
+	ICoord2D creationResolution;
+	Bool bottomAnchored = FALSE;
+	Int horizontalGroup = CONTROL_BAR_PRO_GROUP_NONE;
+	Bool controlBarLayout = FALSE;
+	if (window->winGetScriptLayoutGeometry(&authored, &creationResolution,
+		&bottomAnchored, &horizontalGroup, &controlBarLayout) &&
+		(filter == GENERALSX_REFLOW_ALL ||
+			(filter == GENERALSX_REFLOW_CONTROL_BAR && controlBarLayout) ||
+			(filter == GENERALSX_REFLOW_NON_CONTROL_BAR && !controlBarLayout)) &&
+		creationResolution.x > 0 && creationResolution.y > 0)
+	{
+		const Real xScale = TheDisplay->getWidth() / (Real)creationResolution.x;
+		const Real yScale = TheDisplay->getHeight() / (Real)creationResolution.y;
+		const Real scale = xScale < yScale ? xScale : yScale;
+		Real offsetX = ((Real)TheDisplay->getWidth() - creationResolution.x * scale) * 0.5f;
+		Real offsetY = ((Real)TheDisplay->getHeight() - creationResolution.y * scale) * 0.5f;
+		const Real horizontalSlack = (Real)TheDisplay->getWidth() - creationResolution.x * scale;
+		const Bool fullWidth = bottomAnchored &&
+			horizontalGroup == CONTROL_BAR_PRO_GROUP_FULL_WIDTH &&
+			authored.lo.x == 0 && authored.hi.x == creationResolution.x;
+
+		if (bottomAnchored)
+		{
+			if (horizontalGroup == CONTROL_BAR_PRO_GROUP_LEFT)
+				offsetX = 0.0f;
+			else if (horizontalGroup == CONTROL_BAR_PRO_GROUP_RIGHT)
+				offsetX = horizontalSlack;
+			else
+				offsetX = horizontalSlack * 0.5f;
+			offsetY = (Real)TheDisplay->getHeight() - creationResolution.y * scale;
+		}
+
+		IRegion2D target;
+		if (fullWidth)
+		{
+			target.lo.x = 0;
+			target.hi.x = TheDisplay->getWidth();
+		}
+		else
+		{
+			target.lo.x = (Int)(authored.lo.x * scale + offsetX);
+			target.hi.x = (Int)(authored.hi.x * scale + offsetX);
+		}
+		target.lo.y = (Int)(authored.lo.y * scale + offsetY);
+		target.hi.y = (Int)(authored.hi.y * scale + offsetY);
+
+		Int parentX = 0;
+		Int parentY = 0;
+		if (window->winGetParent())
+			window->winGetParent()->winGetScreenPosition(&parentX, &parentY);
+		// GeneralsX @bugfix 23/08/2026 A live resolution change cannot preserve an
+		// expanded combo box: its temporary total height is not the authored collapsed
+		// rectangle, and its generated edit/list/button children then miss the resize.
+		// Close it before applying the tracked rectangle so GGM_RESIZED lays out the
+		// complete compound control in the new coordinate system.
+		if (BitIsSet(window->winGetStyle(), GWS_COMBO_BOX))
+			GadgetComboBoxHideList(window);
+		window->winSetPosition(target.lo.x - parentX, target.lo.y - parentY);
+		window->winSetSize(target.hi.x - target.lo.x, target.hi.y - target.lo.y);
+		if (BitIsSet(window->winGetStyle(), GWS_COMBO_BOX))
+			GadgetComboBoxUpdateGeometry(window);
+	}
+
+	// Parents are updated first, so absolute authored rectangles can safely be
+	// converted back to positions relative to the current parent.
+	for (GameWindow *child = window->winGetChild(); child; child = child->winGetNext())
+		GeneralsX_ReflowTrackedScriptWindow(child, filter);
+}
+
+// Reflow one existing scripted tree. This is used by widgets whose animation
+// manager caches an absolute rest position: reset the animation first, then
+// establish the current-resolution geometry before registering it again.
+void GeneralsX_ReflowScriptWindowTree(GameWindow *window)
+{
+	if (!TheWindowManager || !TheDisplay || !window)
+		return;
+	GeneralsX_ReflowTrackedScriptWindow(window, GENERALSX_REFLOW_ALL);
+}
+
+// Reflow the existing stateful Control Bar tree in place. No script load,
+// allocation, deletion or callback replacement occurs here.
+void GeneralsX_ReflowControlBarWindows(void)
+{
+	if (!TheWindowManager || !TheDisplay)
+		return;
+	for (GameWindow *window = TheWindowManager->winGetWindowList(); window; window = window->winGetNext())
+		GeneralsX_ReflowTrackedScriptWindow(window, GENERALSX_REFLOW_CONTROL_BAR);
+}
+
+// Gameplay has stateful scripted overlays outside ControlBar.wnd too: the ESC
+// menu, build-command tooltip and mission panels are examples. Reflow those
+// existing windows without touching Control Bar Pro or recreating any layout.
+void GeneralsX_ReflowNonControlBarWindows(void)
+{
+	if (!TheWindowManager || !TheDisplay)
+		return;
+	for (GameWindow *window = TheWindowManager->winGetWindowList(); window; window = window->winGetNext())
+		GeneralsX_ReflowTrackedScriptWindow(window, GENERALSX_REFLOW_NON_CONTROL_BAR);
+}
+
+// Shell layouts use the same authored rectangles, but are refreshed only while
+// Shell owns the UI. This fixes fullscreen/window transitions without invoking
+// Shell::construct(), changing modes or restarting the animated shell map.
+void GeneralsX_ReflowShellWindows(void)
+{
+	if (!TheWindowManager || !TheDisplay)
+		return;
+	for (GameWindow *window = TheWindowManager->winGetWindowList(); window; window = window->winGetNext())
+		GeneralsX_ReflowTrackedScriptWindow(window, GENERALSX_REFLOW_ALL);
+}

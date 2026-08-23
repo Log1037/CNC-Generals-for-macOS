@@ -256,6 +256,7 @@ public:
 
 	void setControlBarSchemeByPlayer(Player *p);																				///< Based off the playerTemplate, pick the right scheme for the control bar
 	void setControlBarSchemeByPlayerTemplate( const PlayerTemplate *pt, Bool useSmall = FALSE);
+	void onResolutionChanged();
 	void setControlBarScheme(AsciiString schemeName);																										///< SchemeName must be a valid INI entry
 
 	// parse Functions for the INI file

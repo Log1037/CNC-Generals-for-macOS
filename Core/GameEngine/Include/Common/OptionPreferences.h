@@ -132,5 +132,7 @@ public:
 	Real getMaxCameraHeight() const;
 	Real getMinCameraHeight() const;
 	Real getCameraPitch() const;
+	Real getMaxCameraHeightScale() const;
 	Real getTerrainDrawDistanceScale() const;
+	Int getHealthBarDisplayMode() const;
 };

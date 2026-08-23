@@ -70,6 +70,208 @@ enum{
 	COMMAND_BAR_SIZE_OFFSET = 0
 };
 
+// GeneralsX @bugfix Codex 23/08/2026 Support the official 1920 and 3840 Control Bar Pro design canvases.
+static const Int CONTROL_BAR_PRO_BASE_WIDTH = 1920;
+static const Int CONTROL_BAR_PRO_BASE_IMAGE_Y = 568;
+static const Int CONTROL_BAR_PRO_BASE_IMAGE_HEIGHT = 512;
+static const Int CONTROL_BAR_PRO_BASE_LEFT_GROUP_LIMIT = 400;
+static const Int CONTROL_BAR_PRO_BASE_RIGHT_GROUP_LIMIT = 1500;
+static Int currentControlBarProDesignWidth = 1920;
+static Int currentControlBarProDesignHeight = 1080;
+
+static Bool getControlBarProImageGeometry(const ControlBarSchemeImage *schemeImage,
+													 Int *designWidth, Int *designHeight,
+													 Int *imageY, Int *imageHeight)
+{
+	if (schemeImage == nullptr || schemeImage->m_position.x != 0)
+		return FALSE;
+	if (schemeImage->m_position.y == 568 && schemeImage->m_size.x == 1920 && schemeImage->m_size.y == 512)
+	{
+		*designWidth = 1920;
+		*designHeight = 1080;
+		*imageY = 568;
+		*imageHeight = 512;
+		return TRUE;
+	}
+	if (schemeImage->m_position.y == 1136 && schemeImage->m_size.x == 3840 && schemeImage->m_size.y == 1024)
+	{
+		*designWidth = 3840;
+		*designHeight = 2160;
+		*imageY = 1136;
+		*imageHeight = 1024;
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static Bool isControlBarProImage(const ControlBarSchemeImage *schemeImage)
+{
+	Int designWidth, designHeight, imageY, imageHeight;
+	return getControlBarProImageGeometry(schemeImage, &designWidth, &designHeight, &imageY, &imageHeight);
+}
+
+static Bool isControlBarProScheme(const ControlBarScheme *scheme)
+{
+	if (scheme == nullptr ||
+		(scheme->m_ScreenCreationRes.x != 1920 && scheme->m_ScreenCreationRes.x != 3840) ||
+		scheme->m_ScreenCreationRes.y != scheme->m_ScreenCreationRes.x * 9 / 16)
+		return FALSE;
+
+	for (Int layer = 0; layer < MAX_CONTROL_BAR_SCHEME_IMAGE_LAYERS; ++layer)
+	{
+		ControlBarScheme::ControlBarSchemeImageList::const_iterator it = scheme->m_layer[layer].begin();
+		while (it != scheme->m_layer[layer].end())
+		{
+			if (isControlBarProImage(*it))
+				return TRUE;
+			++it;
+		}
+	}
+	return FALSE;
+}
+
+// ProGen adds boss player sides that are not present in the stock Pro scheme
+// file.  Keep those sides on the matching faction artwork instead of falling
+// back to the legacy 800x600 Default scheme.
+static AsciiString controlBarProSchemeSideAlias(const AsciiString &side)
+{
+	if (side.compareNoCase("USABoss") == 0)
+		return AsciiString("America");
+	if (side.compareNoCase("GLABoss") == 0)
+		return AsciiString("GLA");
+	if (side.compareNoCase("Civilian") == 0)
+		return AsciiString("Observer");
+	return side;
+}
+
+static ControlBarScheme *findBestSchemeForSide(const std::list<ControlBarScheme*> &schemes,
+																			 const AsciiString &side)
+{
+	ControlBarScheme *best = nullptr;
+	for (std::list<ControlBarScheme*>::const_iterator it = schemes.begin(); it != schemes.end(); ++it)
+	{
+		ControlBarScheme *scheme = *it;
+		if (scheme && scheme->m_side.compareNoCase(side) == 0 &&
+			(!best || best->m_ScreenCreationRes.x < scheme->m_ScreenCreationRes.x))
+			best = scheme;
+	}
+	return best;
+}
+
+static Real controlBarProScale()
+{
+	const Real xScale = TheDisplay->getWidth() / (Real)currentControlBarProDesignWidth;
+	const Real yScale = TheDisplay->getHeight() / (Real)currentControlBarProDesignHeight;
+	return xScale < yScale ? xScale : yScale;
+}
+
+static void setControlBarSchemeMultiplier(const ControlBarScheme *scheme, Coord2D *multiplier)
+{
+	if (scheme == nullptr || multiplier == nullptr)
+		return;
+	multiplier->x = TheDisplay->getWidth() / (Real)scheme->m_ScreenCreationRes.x;
+	multiplier->y = TheDisplay->getHeight() / (Real)scheme->m_ScreenCreationRes.y;
+	if (isControlBarProScheme(scheme))
+	{
+		// Every Pro layer, window and hit rectangle must use the same transform.
+		// On viewports narrower than 16:9 the width therefore determines the
+		// scale; the complete bar becomes smaller instead of extending below the
+		// viewport or stretching its contents away from the background artwork.
+		const Real scale = multiplier->x < multiplier->y ? multiplier->x : multiplier->y;
+		multiplier->x = multiplier->y = scale;
+	}
+}
+
+static Int controlBarProHorizontalOffset(Int designX, Real scale)
+{
+	const Int slack = TheDisplay->getWidth() - (Int)(currentControlBarProDesignWidth * scale);
+	const Int leftLimit = currentControlBarProDesignWidth * CONTROL_BAR_PRO_BASE_LEFT_GROUP_LIMIT / CONTROL_BAR_PRO_BASE_WIDTH;
+	const Int rightLimit = currentControlBarProDesignWidth * CONTROL_BAR_PRO_BASE_RIGHT_GROUP_LIMIT / CONTROL_BAR_PRO_BASE_WIDTH;
+	if (designX < leftLimit)
+		return 0;
+	if (designX >= rightLimit)
+		return slack;
+	return slack / 2;
+}
+
+static Int scaleControlBarX(Int designX, const Coord2D &multiplier, Bool anchored)
+{
+	if (!anchored)
+		return (Int)(designX * multiplier.x);
+	const Real scale = multiplier.x;
+	return (Int)(designX * scale + controlBarProHorizontalOffset(designX, scale));
+}
+
+static Int scaleControlBarY(Int designY, const Coord2D &multiplier, Bool anchored)
+{
+	if (!anchored)
+		return (Int)(designY * multiplier.y);
+	const Real scale = multiplier.y;
+	return (Int)(designY * scale + TheDisplay->getHeight() - currentControlBarProDesignHeight * scale);
+}
+
+static Int scaleControlBarWidth(Int width, const Coord2D &multiplier)
+{
+	return (Int)(width * multiplier.x);
+}
+
+static Int scaleControlBarHeight(Int height, const Coord2D &multiplier)
+{
+	return (Int)(height * multiplier.y);
+}
+
+static Bool drawAnchoredControlBarProImage(const ControlBarSchemeImage *schemeImage,
+																										 ICoord2D offset)
+{
+	Int designWidth, designHeight, imageY, imageHeight;
+	if (!getControlBarProImageGeometry(schemeImage, &designWidth, &designHeight, &imageY, &imageHeight))
+		return FALSE;
+	if (schemeImage->m_image == nullptr)
+		return TRUE;
+
+	const Real xScale = TheDisplay->getWidth() / (Real)designWidth;
+	const Real yScale = TheDisplay->getHeight() / (Real)designHeight;
+	const Real scale = xScale < yScale ? xScale : yScale;
+	const Int scaledWidth = (Int)(designWidth * scale);
+	const Int scaledHeight = (Int)(imageHeight * scale);
+	const Int slack = TheDisplay->getWidth() - scaledWidth;
+	const Int top = TheDisplay->getHeight() - (Int)(designHeight * scale) + (Int)(imageY * scale) + offset.y;
+	const Int segmentDesignLeft[] = { 0, designWidth * 592 / CONTROL_BAR_PRO_BASE_WIDTH,
+		designWidth * 1625 / CONTROL_BAR_PRO_BASE_WIDTH };
+	const Int segmentDesignRight[] = { designWidth * 340 / CONTROL_BAR_PRO_BASE_WIDTH,
+		designWidth * 1326 / CONTROL_BAR_PRO_BASE_WIDTH, designWidth };
+	const Int imageLeft[] = { offset.x, offset.x + slack / 2, offset.x + slack };
+
+	IRegion2D savedClip;
+	const Bool hadClip = TheDisplay->isClippingEnabled();
+	const Bool savedClipAvailable = hadClip && TheDisplay->getClipRegion(&savedClip);
+	TheDisplay->enableClipping(TRUE);
+	for (Int i = 0; i < 3; ++i)
+	{
+		IRegion2D clip;
+		clip.lo.x = imageLeft[i] + (Int)(segmentDesignLeft[i] * scale);
+		clip.lo.y = top;
+		clip.hi.x = imageLeft[i] + (Int)(segmentDesignRight[i] * scale);
+		clip.hi.y = top + scaledHeight;
+		if (savedClipAvailable)
+		{
+			clip.lo.x = MAX(clip.lo.x, savedClip.lo.x);
+			clip.lo.y = MAX(clip.lo.y, savedClip.lo.y);
+			clip.hi.x = MIN(clip.hi.x, savedClip.hi.x);
+			clip.hi.y = MIN(clip.hi.y, savedClip.hi.y);
+		}
+		if (clip.lo.x >= clip.hi.x || clip.lo.y >= clip.hi.y)
+			continue;
+		TheDisplay->setClipRegion(&clip);
+		TheDisplay->drawImage(schemeImage->m_image, imageLeft[i], top,
+			imageLeft[i] + scaledWidth, top + scaledHeight);
+	}
+	if (hadClip && savedClipAvailable)
+		TheDisplay->setClipRegion(&savedClip);
+	TheDisplay->enableClipping(hadClip);
+	return TRUE;
+}
+
 const FieldParse ControlBarSchemeManager::m_controlBarSchemeFieldParseTable[] =
 {
 
@@ -418,8 +620,30 @@ void ControlBarScheme::init()
 	}
 	GameWindow *win = nullptr;
 	Coord2D resMultiplier;
-	resMultiplier.x = TheDisplay->getWidth()/INT_TO_REAL(m_ScreenCreationRes.x) ;
+	const Bool anchoredControlBarPro = isControlBarProScheme(this);
+	GameWindow *munkee = TheWindowManager->winGetWindowFromId(nullptr,
+		TheNameKeyGenerator->nameToKey("ControlBar.wnd:Munkee"));
+	if (munkee)
+	{
+		// The 4K addon keeps the stock full-screen image in this window for
+		// compatibility. It must not remain visible behind the independent Pro
+		// background segments.
+		munkee->winHide(anchoredControlBarPro);
+	}
+	if (anchoredControlBarPro)
+	{
+		currentControlBarProDesignWidth = m_ScreenCreationRes.x;
+		currentControlBarProDesignHeight = m_ScreenCreationRes.y;
+	}
+	else
+	{
+		currentControlBarProDesignWidth = 1920;
+		currentControlBarProDesignHeight = 1080;
+	}
+	resMultiplier.x = TheDisplay->getWidth()/INT_TO_REAL(m_ScreenCreationRes.x);
 	resMultiplier.y = TheDisplay->getHeight()/INT_TO_REAL(m_ScreenCreationRes.y);
+	if (anchoredControlBarPro)
+		resMultiplier.x = resMultiplier.y = controlBarProScale();
 
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:PopupCommunicator" ) );
 	if(win)
@@ -438,16 +662,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_chatUL.x * resMultiplier.x - parX;
-			y = m_chatUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_chatUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_chatUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_chatUL.x * resMultiplier.x;
-			y = m_chatUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_chatUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_chatUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_chatLR.x - m_chatUL.x)*resMultiplier.x + static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_chatLR.y - m_chatUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_chatLR.x - m_chatUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_chatLR.y - m_chatUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ButtonIdleWorker" ) );
 	if(win)
@@ -463,17 +688,18 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_workerUL.x * resMultiplier.x - parX;
-			y = m_workerUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_workerUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_workerUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_workerUL.x * resMultiplier.x;
-			y = m_workerUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_workerUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_workerUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
 
-		win->winSetSize((m_workerLR.x - m_workerUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_workerLR.y - m_workerUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_workerLR.x - m_workerUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_workerLR.y - m_workerUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 
 	}
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ExpBarForeground" ) );
@@ -494,16 +720,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_optionsUL.x * resMultiplier.x - parX;
-			y = m_optionsUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_optionsUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_optionsUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_optionsUL.x * resMultiplier.x;
-			y = m_optionsUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_optionsUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_optionsUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_optionsLR.x - m_optionsUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_optionsLR.y - m_optionsUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_optionsLR.x - m_optionsUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_optionsLR.y - m_optionsUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ButtonPlaceBeacon" ) );
 	if(win)
@@ -519,16 +746,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_beaconUL.x * resMultiplier.x - parX;
-			y = m_beaconUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_beaconUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_beaconUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_beaconUL.x * resMultiplier.x;
-			y = m_beaconUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_beaconUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_beaconUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_beaconLR.x - m_beaconUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_beaconLR.y - m_beaconUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_beaconLR.x - m_beaconUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_beaconLR.y - m_beaconUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:MoneyDisplay" ) );
@@ -541,16 +769,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_moneyUL.x * resMultiplier.x - parX;
-			y = m_moneyUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_moneyUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_moneyUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_moneyUL.x * resMultiplier.x;
-			y = m_moneyUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_moneyUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_moneyUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_moneyLR.x - m_moneyUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_moneyLR.y - m_moneyUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_moneyLR.x - m_moneyUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_moneyLR.y - m_moneyUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:PowerWindow" ) );
@@ -563,16 +792,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_powerBarUL.x * resMultiplier.x - parX;
-			y = m_powerBarUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_powerBarUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_powerBarUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_powerBarUL.x * resMultiplier.x;
-			y = m_powerBarUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_powerBarUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_powerBarUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_powerBarLR.x - m_powerBarUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_powerBarLR.y - m_powerBarUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_powerBarLR.x - m_powerBarUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_powerBarLR.y - m_powerBarUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 		DEBUG_LOG(("Power Bar UL X:%d Y:%d LR X:%d Y:%d size X:%d Y:%d",m_powerBarUL.x, m_powerBarUL.y,m_powerBarLR.x, m_powerBarLR.y, (m_powerBarLR.x - m_powerBarUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_powerBarLR.y - m_powerBarUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET)  ));
 	}
 
@@ -591,16 +821,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_generalUL.x * resMultiplier.x - parX;
-			y = m_generalUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_generalUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_generalUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_generalUL.x * resMultiplier.x;
-			y = m_generalUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_generalUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_generalUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_generalLR.x - m_generalUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_generalLR.y - m_generalUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_generalLR.x - m_generalUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_generalLR.y - m_generalUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ButtonLarge" ) );
@@ -617,16 +848,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_minMaxUL.x * resMultiplier.x - parX;
-			y = m_minMaxUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_minMaxUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_minMaxUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_minMaxUL.x * resMultiplier.x;
-			y = m_minMaxUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_minMaxUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_minMaxUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_minMaxLR.x - m_minMaxUL.x)*resMultiplier.x + static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_minMaxLR.y - m_minMaxUL.y)*resMultiplier.y + static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_minMaxLR.x - m_minMaxUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_minMaxLR.y - m_minMaxUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 
 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:WinUAttack" ) );
@@ -641,16 +873,17 @@ void ControlBarScheme::init()
 		{
 			Int parX, parY;
 			parent->winGetScreenPosition(&parX, &parY);
-			x = m_uAttackUL.x * resMultiplier.x - parX;
-			y = m_uAttackUL.y * resMultiplier.y - parY;
+			x = scaleControlBarX(m_uAttackUL.x, resMultiplier, anchoredControlBarPro) - parX;
+			y = scaleControlBarY(m_uAttackUL.y, resMultiplier, anchoredControlBarPro) - parY;
 		}
 		else
 		{
-			x = m_uAttackUL.x * resMultiplier.x;
-			y = m_uAttackUL.y * resMultiplier.y;
+			x = scaleControlBarX(m_uAttackUL.x, resMultiplier, anchoredControlBarPro);
+			y = scaleControlBarY(m_uAttackUL.y, resMultiplier, anchoredControlBarPro);
 		}
 		win->winSetPosition(x,y );
-		win->winSetSize((m_uAttackLR.x - m_uAttackUL.x)*resMultiplier.x+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET),(m_uAttackLR.y - m_uAttackUL.y)*resMultiplier.y+ static_cast<float>(COMMAND_BAR_SIZE_OFFSET));
+		win->winSetSize(scaleControlBarWidth(m_uAttackLR.x - m_uAttackUL.x, resMultiplier) + COMMAND_BAR_SIZE_OFFSET,
+			scaleControlBarHeight(m_uAttackLR.y - m_uAttackUL.y, resMultiplier) + COMMAND_BAR_SIZE_OFFSET);
 	}
 
 	win = TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "GeneralsExpPoints.wnd:GenExpParent" ) );
@@ -659,7 +892,8 @@ void ControlBarScheme::init()
 		win->winSetEnabledImage(0,m_powerPurchaseImage);
 		if( m_powerPurchaseImage )
 		{
-			win->winSetSize(m_powerPurchaseImage->getImageWidth() * resMultiplier.x, m_powerPurchaseImage->getImageHeight() * resMultiplier.y);
+			win->winSetSize(scaleControlBarWidth(m_powerPurchaseImage->getImageWidth(), resMultiplier),
+				scaleControlBarHeight(m_powerPurchaseImage->getImageHeight(), resMultiplier));
 		}
 	}
 }
@@ -744,6 +978,7 @@ void ControlBarScheme::update()
 //-----------------------------------------------------------------------------
 void ControlBarScheme::drawForeground( Coord2D multi, ICoord2D offset )
 {
+	const Bool anchoredControlBarPro = isControlBarProScheme(this);
 	for(Int i = CONTROL_BAR_SCHEME_FOREGROUND_IMAGE_LAYERS - 1; i >= 0; i--)
 	{
 		ControlBarSchemeImageList::iterator it = m_layer[i].begin();
@@ -763,7 +998,12 @@ void ControlBarScheme::drawForeground( Coord2D multi, ICoord2D offset )
 				it++;
 				continue;
 			}
-
+			if (anchoredControlBarPro &&
+				drawAnchoredControlBarProImage(schemeImage, offset))
+			{
+				it++;
+				continue;
+			}
 			// draw the image
 			TheDisplay->drawImage(schemeImage->m_image, schemeImage->m_position.x * multi.x + offset.x,
 														schemeImage->m_position.y * multi.y + offset.y,
@@ -780,6 +1020,7 @@ void ControlBarScheme::drawForeground( Coord2D multi, ICoord2D offset )
 //-----------------------------------------------------------------------------
 void ControlBarScheme::drawBackground( Coord2D multi, ICoord2D offset )
 {
+	const Bool anchoredControlBarPro = isControlBarProScheme(this);
 
 	for(Int i = MAX_CONTROL_BAR_SCHEME_IMAGE_LAYERS - 1; i >= CONTROL_BAR_SCHEME_FOREGROUND_IMAGE_LAYERS; i--)
 	{
@@ -800,7 +1041,12 @@ void ControlBarScheme::drawBackground( Coord2D multi, ICoord2D offset )
 				it++;
 				continue;
 			}
-
+			if (anchoredControlBarPro &&
+				drawAnchoredControlBarProImage(schemeImage, offset))
+			{
+				it++;
+				continue;
+			}
 			// draw it
 			TheDisplay->drawImage(schemeImage->m_image, schemeImage->m_position.x * multi.x + offset.x,
 														schemeImage->m_position.y * multi.y + offset.y,
@@ -1007,7 +1253,6 @@ void ControlBarSchemeManager::preloadAssets( TimeOfDay timeOfDay )
 //-----------------------------------------------------------------------------
 void ControlBarSchemeManager::init()
 {
-
 	INI ini;
 	// Read from INI all the ControlBarSchemes
 	ini.loadFileDirectory( "Data\\INI\\Default\\ControlBarScheme", INI_LOAD_OVERWRITE, nullptr );
@@ -1027,7 +1272,6 @@ void ControlBarSchemeManager::init()
 		DEBUG_CRASH(("There's no ControlBarScheme in the ControlBarSchemeList:m_schemeList that was just read from the INI file"));
 		return;
 	}
-
 }
 
 //
@@ -1040,8 +1284,7 @@ void ControlBarSchemeManager::setControlBarScheme(AsciiString schemeName)
 	if(tempScheme)
 	{
 		// setup the multiplier value
-		m_multiplier.x = TheDisplay->getWidth() / tempScheme->m_ScreenCreationRes.x;
-		m_multiplier.y = TheDisplay->getHeight() / tempScheme->m_ScreenCreationRes.y;
+		setControlBarSchemeMultiplier(tempScheme, &m_multiplier);
 		m_currentScheme = tempScheme;
 	}
 	else
@@ -1050,7 +1293,17 @@ void ControlBarSchemeManager::setControlBarScheme(AsciiString schemeName)
 		m_currentScheme = nullptr;
 	}
 	if(m_currentScheme)
+	{
 		m_currentScheme->init();
+	}
+}
+
+void ControlBarSchemeManager::onResolutionChanged()
+{
+	if (!m_currentScheme)
+		return;
+	setControlBarSchemeMultiplier(m_currentScheme, &m_multiplier);
+	m_currentScheme->init();
 }
 
 //
@@ -1094,8 +1347,11 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayerTemplate( const PlayerT
 	// if we don't have a side, set it to Observer shell
 	if(side.isEmpty())
 		side.set("Observer");
+	const AsciiString aliasedSide = controlBarProSchemeSideAlias(side);
 	DEBUG_LOG(("setControlBarSchemeByPlayer used %s as its side", side.str()));
-	ControlBarScheme *tempScheme = nullptr;
+	ControlBarScheme *tempScheme = findBestSchemeForSide(m_schemeList, side);
+	if (!tempScheme && aliasedSide.compareNoCase(side) != 0)
+		tempScheme = findBestSchemeForSide(m_schemeList, aliasedSide);
 
 	ControlBarSchemeList::iterator it = m_schemeList.begin();
 
@@ -1110,12 +1366,8 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayerTemplate( const PlayerT
 			continue;
 		}
 		// find the scheme that best matches our resolution
-		if(CBScheme->m_side.compareNoCase( side ) == 0)
-		{
-
-			if((!tempScheme || tempScheme->m_ScreenCreationRes.x < CBScheme->m_ScreenCreationRes.x) )//&& TheDisplay->getWidth() >= CBScheme->m_ScreenCreationRes.x )
-				tempScheme = CBScheme;
-		}
+		if (tempScheme == nullptr && CBScheme->m_side.compareNoCase(side) == 0)
+			tempScheme = CBScheme;
 		it ++;
 	}
 
@@ -1162,8 +1414,11 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayer(Player *p)
 	// if we don't have a side, set it to Observer shell
 	if(side.isEmpty())
 		side.set("Observer");
+	const AsciiString aliasedSide = controlBarProSchemeSideAlias(side);
 	DEBUG_LOG(("setControlBarSchemeByPlayer used %s as its side", side.str()));
-	ControlBarScheme *tempScheme = nullptr;
+	ControlBarScheme *tempScheme = findBestSchemeForSide(m_schemeList, side);
+	if (!tempScheme && aliasedSide.compareNoCase(side) != 0)
+		tempScheme = findBestSchemeForSide(m_schemeList, aliasedSide);
 
 	ControlBarSchemeList::iterator it = m_schemeList.begin();
 
@@ -1178,12 +1433,8 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayer(Player *p)
 			continue;
 		}
 		// find the scheme that best matches our resolution
-		if(CBScheme->m_side.compareNoCase( side ) == 0)
-		{
-
-			if((!tempScheme || tempScheme->m_ScreenCreationRes.x < CBScheme->m_ScreenCreationRes.x) )//&& TheDisplay->getWidth() >= CBScheme->m_ScreenCreationRes.x )
-				tempScheme = CBScheme;
-		}
+		if (tempScheme == nullptr && CBScheme->m_side.compareNoCase(side) == 0)
+			tempScheme = CBScheme;
 		it ++;
 	}
 
@@ -1243,4 +1494,3 @@ static void animSlideRight( ControlBarSchemeAnimation *anim )
 
 
 }
-

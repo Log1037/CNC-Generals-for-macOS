@@ -46,6 +46,7 @@ public:
 	virtual void init() override {}			///< initialize the factory
 	virtual void reset() override {}			///< reset system
 	virtual void update() override {};		///< update anything we need to in our strings
+	virtual void onResolutionChanged() {}	///< invalidate device-specific cached render geometry
 
 	virtual DisplayString *newDisplayString() = 0;  ///< allocate new display string
 	virtual void freeDisplayString( DisplayString *string ) = 0;  ///< free string

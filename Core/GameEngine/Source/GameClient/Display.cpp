@@ -154,19 +154,35 @@ Bool Display::setDisplayMode( UnsignedInt xres, UnsignedInt yres, UnsignedInt bi
 	//Get old values
 	UnsignedInt oldDisplayHeight=getHeight();
 	UnsignedInt oldDisplayWidth=getWidth();
-	Int oldViewWidth=TheTacticalView->getWidth();
-	Int oldViewHeight=TheTacticalView->getHeight();
-	Int oldViewOriginX,oldViewOriginY;
-	TheTacticalView->getOrigin(&oldViewOriginX,&oldViewOriginY);
+	// GeneralsX @bugfix Log1037 23/08/2026: a display-mode change is also used while
+	// the engine is starting up and while a movie owns the display. In those states
+	// the tactical view may not exist yet. It is also possible for the old display
+	// size to be zero during initial device setup, so do not dereference or scale the
+	// view unless both inputs are valid.
+	const Bool canScaleTacticalView =
+		TheTacticalView != nullptr && oldDisplayWidth > 0 && oldDisplayHeight > 0;
+	Int oldViewWidth = 0;
+	Int oldViewHeight = 0;
+	Int oldViewOriginX = 0;
+	Int oldViewOriginY = 0;
+	if (canScaleTacticalView)
+	{
+		oldViewWidth = TheTacticalView->getWidth();
+		oldViewHeight = TheTacticalView->getHeight();
+		TheTacticalView->getOrigin(&oldViewOriginX, &oldViewOriginY);
+	}
 
 	setWidth(xres);
 	setHeight(yres);
 
 	//Adjust view to match previous proportions
-	TheTacticalView->setWidth((Real)oldViewWidth/(Real)oldDisplayWidth*(Real)xres);
-	TheTacticalView->setHeight((Real)oldViewHeight/(Real)oldDisplayHeight*(Real)yres);
-	TheTacticalView->setOrigin((Real)oldViewOriginX/(Real)oldDisplayWidth*(Real)xres,
-	(Real)oldViewOriginY/(Real)oldDisplayHeight*(Real)yres);
+	if (canScaleTacticalView)
+	{
+		TheTacticalView->setWidth((Real)oldViewWidth/(Real)oldDisplayWidth*(Real)xres);
+		TheTacticalView->setHeight((Real)oldViewHeight/(Real)oldDisplayHeight*(Real)yres);
+		TheTacticalView->setOrigin((Real)oldViewOriginX/(Real)oldDisplayWidth*(Real)xres,
+			(Real)oldViewOriginY/(Real)oldDisplayHeight*(Real)yres);
+	}
 	return TRUE;
 }
 

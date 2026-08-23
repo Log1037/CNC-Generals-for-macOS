@@ -275,8 +275,7 @@ CBCommandStatus ControlBar::processCommandUI( GameWindow *control,
 			const SpecialPowerTemplate *spTemplate = commandButton->getSpecialPowerTemplate();
 			DEBUG_ASSERTCRASH(spTemplate != nullptr, ("Special Power Button is missing Special Power template"));
 
-			SpecialPowerType spType = spTemplate->getSpecialPowerType();
-			Object* obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPowerOfType( spType );
+			Object* obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPower( spTemplate );
 			if( !obj )
 				break;
 			Drawable *draw = obj->getDrawable();
@@ -834,9 +833,7 @@ CBCommandStatus ControlBar::processCommandUI( GameWindow *control,
 		case GUI_COMMAND_SPECIAL_POWER_FROM_SHORTCUT:
 		{
 			const SpecialPowerTemplate *spTemplate = commandButton->getSpecialPowerTemplate();
-			SpecialPowerType spType = spTemplate->getSpecialPowerType();
-
-			Object* obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPowerOfType( spType );
+			Object* obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPower( spTemplate );
 			if( !obj )
 				break;
 
@@ -904,4 +901,3 @@ CBCommandStatus ControlBar::processCommandUI( GameWindow *control,
 	return CBC_COMMAND_USED;
 
 }
-

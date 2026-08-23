@@ -918,6 +918,20 @@ Real OptionPreferences::getCameraPitch() const
 	return val;
 }
 
+Real OptionPreferences::getMaxCameraHeightScale() const
+{
+	OptionPreferences::const_iterator it = find("MaxCameraHeightScale");
+	if (it == end())
+		return TheGlobalData->m_maxCameraHeightScale;
+
+	Real val = (Real)atof(it->second.str());
+	if (val < 1.0f)
+		val = 1.0f;
+	if (val > 1.5f)
+		val = 1.5f;
+	return val;
+}
+
 Real OptionPreferences::getTerrainDrawDistanceScale() const
 {
 	OptionPreferences::const_iterator it = find("TerrainDrawDistanceScale");
@@ -925,9 +939,23 @@ Real OptionPreferences::getTerrainDrawDistanceScale() const
 		return TheGlobalData->m_terrainDrawDistanceScale;
 
 	Real val = (Real)atof(it->second.str());
+	// GeneralsX @bugfix Codex 21/08/2026 Early Extras candidates saved the slider percentage
+	// (for example 105) instead of the engine scale (1.05). Accept that file once without turning it
+	// into the maximum 200% override; the next Remember action writes the normalized representation.
+	if (val > 2.0f && val <= 200.0f)
+		val /= 100.0f;
 	if (val < 1.0f)
 		val = 1.0f;
 	if (val > 2.0f)
 		val = 2.0f;
 	return val;
+}
+
+Int OptionPreferences::getHealthBarDisplayMode() const
+{
+	OptionPreferences::const_iterator it = find("HealthBarDisplayMode");
+	if (it == end())
+		return TheGlobalData->m_healthBarDisplayMode;
+
+	return clamp<Int>(0, atoi(it->second.str()), 2);
 }

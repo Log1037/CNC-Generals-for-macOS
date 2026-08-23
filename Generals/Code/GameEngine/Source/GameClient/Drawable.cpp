@@ -3322,41 +3322,55 @@ void Drawable::drawHealthBar(const IRegion2D* healthBarRegion)
 	if (!healthBarRegion)
 		return;
 
-	//
-	// only draw health for selected drawables and drawables that have been moused over
-	// by the cursor
-	//
-	if( TheGlobalData->m_showObjectHealth &&
-			(isSelected() || (TheInGameUI && (TheInGameUI->getMousedOverDrawableID() == getID()))) )
+	if (!TheGlobalData->m_showObjectHealth)
+		return;
+
+	Object *obj = getObject();
+
+	// if no object, nothing to do
+	if( obj == nullptr )
+		return;
+
+	if( obj->isKindOf( KINDOF_FORCEATTACKABLE ) )
 	{
-		Object *obj = getObject();
+		//Currently (Nov 2002), everything that is forceattackable are civ fences, and they all have a
+		//single hit point and they aren't selectable. However, a bug is when you force attack it, it shows
+		//the healthbar. Well, this stops it, however, should force attackable kindofs change, then this
+		//will require reevaluation.
+		return;
+	}
 
-		// if no object, nothing to do
-		if( obj == nullptr )
-			return;
+	// get body module of object
+	BodyModuleInterface *body = obj->getBodyModule();
 
-		if( obj->isKindOf( KINDOF_FORCEATTACKABLE ) )
-		{
-			//Currently (Nov 2002), everything that is forceattackable are civ fences, and they all have a
-			//single hit point and they aren't selectable. However, a bug is when you force attack it, it shows
-			//the healthbar. Well, this stops it, however, should force attackable kindofs change, then this
-			//will require reevaluation.
-			return;
-		}
+	// get the health and max health
+	Real health = body->getHealth();
+	Real maxHealth = body->getMaxHealth();
 
-		// get body module of object
-		BodyModuleInterface *body = obj->getBodyModule();
+	// if no max health or health at all we will draw nothing
+	if( maxHealth == 0.0f || health == 0.0f )
+		return;
 
-		// get the health and max health
-		Real health = body->getHealth();
-		Real maxHealth = body->getMaxHealth();
+	// GeneralsX @feature Codex 21/08/2026 Preserve retail selected/hover behaviour by default,
+	// with local presentation-only modes for damaged or all currently visible objects.
+	const Bool retailVisible = isSelected() ||
+		(TheInGameUI && (TheInGameUI->getMousedOverDrawableID() == getID()));
+	const Int displayMode = clamp<Int>(0, TheGlobalData->m_healthBarDisplayMode, 2);
+	// Automatic modes must cover player-facing objects, not the invisible logical objects used by
+	// weapons and support powers. For example ParticleUplinkCannonTrailRemnant has an ImmortalBody
+	// solely so it can pulse damage for four seconds; drawing every such remnant stacked health bars
+	// at the particle-cannon impact point. SELECTABLE is the shared template-level distinction for
+	// ordinary units/buildings, while IGNORED_IN_GUI excludes mob members and similar UI proxies.
+	// Keep retailVisible independent so mode 0 remains byte-for-byte equivalent in behaviour.
+	const Bool automaticEligible = obj->isKindOf(KINDOF_SELECTABLE) &&
+		!obj->isKindOf(KINDOF_IGNORED_IN_GUI);
+	const Bool automaticVisible = automaticEligible &&
+		(displayMode == 2 || (displayMode == 1 && health < maxHealth));
+	if (!retailVisible && !automaticVisible)
+		return;
 
-		// if no max health or health at all we will draw nothing
-		if( maxHealth == 0.0f || health == 0.0f )
-			return;
-
-		// what is our health ratio
-		Real healthRatio = health / maxHealth;
+	// what is our health ratio
+	Real healthRatio = health / maxHealth;
 
 		//
 		// what color will we use for the health bar based on our ratio, this makes it
@@ -3432,8 +3446,6 @@ void Drawable::drawHealthBar(const IRegion2D* healthBarRegion)
 		TheDisplay->drawFillRect( healthBarRegion->lo.x + 1, healthBarRegion->lo.y + 1,
 															(healthBoxWidth - 2) * healthRatio, healthBoxHeight - 2,
 															color );
-	}
-
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -4108,7 +4120,6 @@ void Drawable::crc( Xfer *xfer )
 {
 
 }
-
 // ------------------------------------------------------------------------------------------------
 /** Xfer the drawable modules
 	* Version Info:
@@ -4920,4 +4931,3 @@ void TintEnvelope::loadPostProcess()
 {
 
 }
-

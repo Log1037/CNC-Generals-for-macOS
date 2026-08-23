@@ -2376,6 +2376,11 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 //		ShowControlBar();
 
 	}
+	// The player scheme and special-power shortcut bar are the last pieces to
+	// establish authored Control Bar Pro geometry. Apply one final in-place
+	// layout pass so the first interactive frame cannot inherit launch/menu size.
+	if (TheInGameUI)
+		TheInGameUI->relayoutControlBar();
 	TheTacticalView->setOkToAdjustHeight(TRUE);
 
 // If defined, the game times various units.

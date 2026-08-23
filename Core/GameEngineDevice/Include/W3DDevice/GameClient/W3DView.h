@@ -215,7 +215,7 @@ public:
 	virtual Int	 getTimeMultiplier() override {return m_timeMultiplier;};///< Get the time multiplier.
 	virtual void setTimeMultiplier(Int multiple) override {m_timeMultiplier = multiple;}; ///< Set the time multiplier.
 	virtual void setDefaultView(Real pitch, Real angle, Real maxHeight) override;
-	virtual void setCameraHeightAboveGroundLimitsToDefault(Real heightScale = 1.0f);
+	virtual void setCameraHeightAboveGroundLimitsToDefault(Real heightScale = -1.0f);
 	virtual void zoomCamera( Real finalZoom, Int milliseconds, Real easeIn, Real easeOut ) override;
 	virtual void pitchCamera( Real finalPitch, Int milliseconds, Real easeIn, Real easeOut ) override;
 
@@ -340,6 +340,8 @@ private:
 	// (gth) C&C3 animation controlled camera feature
 	Bool				m_isCameraSlaved;
 	Bool				m_useRealZoomCam;
+	Real				m_baseMaxHeightAboveGround;
+	Real				m_automaticTerrainDrawScale;
 	AsciiString		m_cameraSlaveObjectName;
 	AsciiString		m_cameraSlaveObjectBoneName;
 };

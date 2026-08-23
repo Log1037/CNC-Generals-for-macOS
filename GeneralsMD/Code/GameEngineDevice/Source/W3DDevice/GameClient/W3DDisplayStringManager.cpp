@@ -221,6 +221,24 @@ void W3DDisplayStringManager::update()
 	m_currentCheckpoint = string;
 }
 
+// GeneralsX @bugfix 23/08/2026 Render2DSentenceClass caches screen-space
+// polygons. A live window/HiDPI resolution change keeps the DisplayString
+// objects alive, so unchanged text otherwise continues to render with vertices
+// from the old coordinate system until its menu is destroyed and reopened.
+void W3DDisplayStringManager::onResolutionChanged()
+{
+	W3DDisplayString *string = static_cast<W3DDisplayString *>(m_stringList);
+	while (string)
+	{
+		string->m_textRenderer.Reset();
+		string->m_textRendererHotKey.Reset();
+		string->m_textChanged = TRUE;
+		string->m_lastResourceFrame = 0;
+		string = static_cast<W3DDisplayString *>(string->next());
+	}
+	m_currentCheckpoint = nullptr;
+}
+
 //-------------------------------------------------------------------------------------------------
 DisplayString *W3DDisplayStringManager::getGroupNumeralString( Int numeral )
 {

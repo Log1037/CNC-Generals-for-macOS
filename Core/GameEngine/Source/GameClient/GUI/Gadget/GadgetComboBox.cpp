@@ -562,27 +562,33 @@ WindowMsgHandledType GadgetComboBoxSystem( GameWindow *window, UnsignedInt msg,
 		{
 			Int width = (Int)mData1;
 			Int height = (Int)mData2;
-			ICoord2D dropDownSize;
-
-			// get needed window sizes
-
-			comboData->dropDownButton->winGetSize( &dropDownSize.x, &dropDownSize.y );
-
 			GameWindow *listBox = GadgetComboBoxGetListBox(window);
-			if (listBox->winIsHidden())
+			if (listBox && listBox->winIsHidden())
 			{
-				if (listBox)
-					listBox->winSetSize(width,height);
+				listBox->winSetSize(width,height);
 
 				if( comboData->dropDownButton )
 				{
-					comboData->dropDownButton->winSetPosition( width - dropDownSize.x, 0 );
+					// GeneralsX @bugfix 23/08/2026 Keep a combo box's generated children on the
+					// same scale as its scripted outer rectangle. The old fixed 21-pixel arrow
+					// survived HiDPI/window reflow and left the arrow and edit field detached.
+					Int dropDownWidth = (height * 21 + 11) / 22;
+					if (dropDownWidth < 1)
+						dropDownWidth = 1;
+					if (dropDownWidth > width)
+						dropDownWidth = width;
+					comboData->dropDownButton->winSetSize( dropDownWidth, height );
+					comboData->dropDownButton->winSetPosition( width - dropDownWidth, 0 );
 				}
 
 				if( comboData->editBox )
 				{
+					Int dropDownWidth = 0;
+					Int dropDownHeight = 0;
+					if (comboData->dropDownButton)
+						comboData->dropDownButton->winGetSize(&dropDownWidth, &dropDownHeight);
 					comboData->editBox->winSetPosition(  0,  0 );
-					comboData->editBox->winSetSize( width - dropDownSize.x, height );
+					comboData->editBox->winSetSize( width - dropDownWidth, height );
 				}
 			}
 			break;
@@ -949,6 +955,49 @@ void GadgetComboBoxHideList( GameWindow *comboBox )
 	// reset via system message
 	TheWindowManager->winSendSystemMsg( comboBox, GGM_CLOSE, 0, 0 );
 }
+
+// GeneralsX @bugfix 23/08/2026 Rebuild the relative geometry of the generated
+// edit, arrow and list windows without depending on the scripted outer window's
+// system callback. These children have no SCREENRECT of their own, so a live
+// resolution reflow must explicitly put them back inside their combo box.
+void GadgetComboBoxUpdateGeometry( GameWindow *comboBox )
+{
+	if (!comboBox || !BitIsSet(comboBox->winGetStyle(), GWS_COMBO_BOX))
+		return;
+
+	GadgetComboBoxHideList(comboBox);
+	ComboBoxData *comboData = (ComboBoxData *)comboBox->winGetUserData();
+	if (!comboData)
+		return;
+
+	Int width = 0;
+	Int height = 0;
+	comboBox->winGetSize(&width, &height);
+	Int dropDownWidth = (height * 21 + 11) / 22;
+	if (dropDownWidth < 1)
+		dropDownWidth = 1;
+	if (dropDownWidth > width)
+		dropDownWidth = width;
+
+	if (comboData->dropDownButton)
+	{
+		comboData->dropDownButton->winSetPosition(width - dropDownWidth, 0);
+		comboData->dropDownButton->winSetSize(dropDownWidth, height);
+	}
+	if (comboData->editBox)
+	{
+		comboData->editBox->winSetPosition(0, 0);
+		comboData->editBox->winSetSize(width - dropDownWidth, height);
+	}
+	if (comboData->listBox)
+	{
+		Int listWidth = 0;
+		Int listHeight = 0;
+		comboData->listBox->winGetSize(&listWidth, &listHeight);
+		comboData->listBox->winSetPosition(0, height);
+		comboData->listBox->winSetSize(width, listHeight);
+	}
+}
 // GadgetComboBoxSetFont =======================================================
 /** Function used to set the Font of the combo box and all sub gadgets */
 //=============================================================================
@@ -1104,4 +1153,3 @@ Int GadgetComboBoxGetLength( GameWindow *combobox )
 
 	return 0;
 }
-

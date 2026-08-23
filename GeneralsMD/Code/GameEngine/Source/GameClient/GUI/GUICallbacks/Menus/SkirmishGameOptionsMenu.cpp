@@ -586,7 +586,11 @@ void positionStartSpotControls( GameWindow *win, GameWindow *mapWindow, Coord3D 
 		if(buttonMapStartPositions[i] == win)
 			break;
 		ICoord2D tempPos;
-		buttonMapStartPositions[i]->winGetScreenPosition(&tempPos.x, &tempPos.y);
+		// GeneralsX @bugfix 23/08/2026 Both values in this overlap test must be in the
+		// map window's local coordinate system. Comparing a new local marker against an
+		// old screen-space marker sent the numbered 1-8 start spots outside the preview
+		// after a centered 4:3 reflow.
+		buttonMapStartPositions[i]->winGetPosition(&tempPos.x, &tempPos.y);
 		// we're inside the other gadget
 		if(gadgetPos.x > tempPos.x && gadgetPos.x < tempPos.x + gadgetSize.x
 				&& gadgetPos.y > tempPos.y && gadgetPos.y < tempPos.y + gadgetSize.y)
@@ -1178,6 +1182,43 @@ void skirmishPositionStartSpots()
 
 	updateSkirmishGameOptions();
 }
+
+// GeneralsX @bugfix 23/08/2026 Refresh the stateful pieces which are positioned
+// after SkirmishGameOptionsMenu.wnd is parsed. Combo boxes own generated child
+// windows, while the numbered start spots are placed from the current map preview;
+// neither can safely keep geometry from an earlier render resolution.
+static void refreshSkirmishGameOptionsDynamicGeometry()
+{
+	if (!parentSkirmishGameOptions || parentSkirmishGameOptions->winIsHidden())
+		return;
+
+	GameWindow *comboBoxes[1 + MAX_SLOTS * 4];
+	Int comboCount = 0;
+	comboBoxes[comboCount++] = comboBoxStartingCash;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		comboBoxes[comboCount++] = comboBoxPlayer[i];
+		comboBoxes[comboCount++] = comboBoxColor[i];
+		comboBoxes[comboCount++] = comboBoxPlayerTemplate[i];
+		comboBoxes[comboCount++] = comboBoxTeam[i];
+	}
+
+	for (Int i = 0; i < comboCount; ++i)
+	{
+		GameWindow *combo = comboBoxes[i];
+		if (!combo)
+			continue;
+		GadgetComboBoxUpdateGeometry(combo);
+	}
+
+	if (TheSkirmishGameInfo && windowMap)
+		skirmishPositionStartSpots();
+}
+
+void NotifySkirmishGameOptionsResolutionChanged()
+{
+	refreshSkirmishGameOptionsDynamicGeometry();
+}
 //-------------------------------------------------------------------------------------------------
 /** Init TextEntryMapDisplay */
 //-------------------------------------------------------------------------------------------------
@@ -1378,8 +1419,9 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
 	// animate controls
   TheShell->showShellMap(TRUE);
 //	TheShell->registerWithAnimateManager(buttonExit, WIN_ANIMATION_SLIDE_RIGHT, TRUE, 1);
-  doUpdateSlotList = TRUE;
-  skirmishUpdateSlotList();
+	doUpdateSlotList = TRUE;
+	skirmishUpdateSlotList();
+	refreshSkirmishGameOptionsDynamicGeometry();
 	justEntered = TRUE;
 	initialGadgetDelay = 2;
 	GameWindow *win = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:SubParent"));
@@ -1458,6 +1500,7 @@ void SkirmishGameOptionsMenuUpdate( WindowLayout * layout, void *userData)
 		{
 			stillNeedsToSetOptions = TRUE;
 			TheWindowManager->winSetFocus( parentSkirmishGameOptions );
+			refreshSkirmishGameOptionsDynamicGeometry();
 			initialGadgetDelay = 2;
 			justEntered = FALSE;
 		}

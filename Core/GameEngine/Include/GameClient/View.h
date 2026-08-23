@@ -173,7 +173,7 @@ public:
 	virtual Bool isTimeFrozen(){ return false;}					///< Freezes time during the next camera movement.
 	virtual Int	 getTimeMultiplier() {return 1;};				///< Get the time multiplier.
 	virtual void setTimeMultiplier(Int multiple) {}; ///< Set the time multiplier.
-	virtual void setCameraHeightAboveGroundLimitsToDefault(Real heightScale = 1.0f) {};
+	virtual void setCameraHeightAboveGroundLimitsToDefault(Real heightScale = -1.0f) {};
 	virtual void setDefaultView(Real pitch, Real angle, Real maxHeight) {};
 	virtual void zoomCamera( Real finalZoom, Int milliseconds, Real easeIn=0.0f, Real easeOut=0.0f ) {};
 	virtual void pitchCamera( Real finalPitch, Int milliseconds, Real easeIn=0.0f, Real easeOut=0.0f ) {};
@@ -229,6 +229,7 @@ public:
 	void lockUserControlUntilFrame(UnsignedInt frame) { m_userControlLockedUntilFrame = frame; } ///< Locks the user control over camera until the given frame is reached.
 
 	virtual void setUserControlled(Bool value) { m_isUserControlled = value; }
+	Bool isUserControlled() const { return m_isUserControlled; }
 	Bool isUserControlLocked() const;
 
 	// for debugging

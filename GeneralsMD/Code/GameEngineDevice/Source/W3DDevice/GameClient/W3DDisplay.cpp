@@ -64,10 +64,12 @@ static void drawFramerateBar();
 
 #include "GameClient/Drawable.h"
 #include "GameClient/GameText.h"
+#include "GameClient/DisplayStringManager.h"
 #include "GameClient/GraphDraw.h"
 #include "GameClient/Line2D.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/GlobalLanguage.h"
+#include "GameClient/GUICallbacks.h"
 // GeneralsX @tweak 27/07/2026 For GeneralsX_NotifyResolutionChanged, which forwards to the header
 // template manager the way the stock options screen does after a resolution change.
 #include "GameClient/HeaderTemplate.h"
@@ -80,6 +82,7 @@ static void drawFramerateBar();
 
 #include "GameNetwork/NetworkInterface.h"
 #include "Common/ModelState.h"
+#include "Common/OptionPreferences.h"
 #include "Lib/BaseType.h"
 #include "W3DDevice/Common/W3DConvert.h"
 #include "W3DDevice/GameClient/W3DAssetManager.h"
@@ -674,6 +677,14 @@ Bool GeneralsX_GetWindowPointSize(int& pointW, int& pointH)
 	return TRUE;
 }
 
+Bool GeneralsX_GetWindowPositionInPoints(int& pointX, int& pointY)
+{
+	extern SDL_Window* TheSDL3Window;
+	if (!TheSDL3Window || (SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_FULLSCREEN) != 0)
+		return FALSE;
+	return SDL_GetWindowPosition(TheSDL3Window, &pointX, &pointY) ? TRUE : FALSE;
+}
+
 // The render resolution the current window should be drawing at, in physical pixels.
 Bool GeneralsX_GetWindowedRenderSize(int& outW, int& outH)
 {
@@ -1173,6 +1184,67 @@ static void SDL3_ApplyWindowModeForRenderConfig(Bool windowed, Int renderWidth, 
 				GeneralsX_SetWindowPointSize(gotW, gotH);
 			}
 		}
+
+		// GeneralsX @feature 23/08/2026 Restore the position saved by Ctrl+G -> Remember.
+		//
+		// ExtrasMenu has always persisted GXWindowPosition, but the corresponding read side was
+		// lost: every launch therefore let Cocoa place the bootstrap window. Apply the preference
+		// only once, after the final windowed size is known. Doing this from every resize would fight
+		// manual dragging and turn a remembered position into a permanent position lock.
+		static Bool restoredRememberedWindowPosition = FALSE;
+		if (!restoredRememberedWindowPosition)
+		{
+			restoredRememberedWindowPosition = TRUE;
+			OptionPreferences preferences;
+			OptionPreferences::const_iterator position = preferences.find("GXWindowPosition");
+			Int savedX = 0;
+			Int savedY = 0;
+			if (position != preferences.end() &&
+				sscanf(position->second.str(), "%d %d", &savedX, &savedY) == 2)
+			{
+				int displayCount = 0;
+				SDL_DisplayID *displays = SDL_GetDisplays(&displayCount);
+				SDL_Rect usable = { 0, 0, 0, 0 };
+				Bool foundSavedDisplay = FALSE;
+				for (int i = 0; displays && i < displayCount; ++i)
+				{
+					SDL_Rect candidate;
+					if (SDL_GetDisplayUsableBounds(displays[i], &candidate) &&
+						savedX >= candidate.x && savedX < candidate.x + candidate.w &&
+						savedY >= candidate.y && savedY < candidate.y + candidate.h)
+					{
+						usable = candidate;
+						foundSavedDisplay = TRUE;
+						break;
+					}
+				}
+				if (displays)
+					SDL_free(displays);
+
+				if (!foundSavedDisplay)
+					SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable);
+
+				int windowW = 0;
+				int windowH = 0;
+				SDL_GetWindowSize(TheSDL3Window, &windowW, &windowH);
+				if (usable.w > 0 && usable.h > 0 && windowW > 0 && windowH > 0)
+				{
+					const int minX = usable.x;
+					const int maxX = usable.x + std::max(0, usable.w - windowW);
+					const int minY = usable.y + s_gxTitleBarPoints;
+					const int maxY = usable.y + std::max(s_gxTitleBarPoints, usable.h - windowH);
+					savedX = std::max(minX, std::min(maxX, savedX));
+					savedY = std::max(minY, std::min(maxY, savedY));
+				}
+
+				if (SDL_SetWindowPosition(TheSDL3Window, savedX, savedY))
+					fprintf(stderr, "INFO: restored remembered window position to %d,%d points\n",
+						savedX, savedY);
+				else
+					fprintf(stderr, "WARNING: could not restore remembered window position: %s\n",
+						SDL_GetError());
+			}
+		}
 #endif
 	}
 
@@ -1198,24 +1270,47 @@ static void SDL3_ApplyWindowModeForRenderConfig(Bool windowed, Int renderWidth, 
 // has created the shell, the in-game UI, or the tactical view.
 void GeneralsX_NotifyResolutionChanged(void)
 {
+	// Recreating Shell always marks it active. Preserve the owner of the current
+	// state: during a match the in-game UI owns input, and during a movie neither
+	// the intro nor a cinematic should be interrupted by rebuilding menu layouts.
+	const Bool movieIsPlaying = TheDisplay && TheDisplay->isMoviePlaying();
+	const Bool shellWasActive = TheShell && TheShell->isShellActive();
+
 	if (TheHeaderTemplateManager) {
 		TheHeaderTemplateManager->onResolutionChanged();
 	}
 	if (TheMouse) {
 		TheMouse->onResolutionChanged();
 	}
+	if (TheDisplayStringManager) {
+		TheDisplayStringManager->onResolutionChanged();
+	}
 
-	// Rebuild what is sized in render pixels. Order follows the stock options screen.
-	if (TheShell) {
-		TheShell->recreateWindowLayouts();
+	// Do not reconstruct Shell here. That stock options path deconstructs and
+	// constructs the entire shell, marks it active, and restarts the 3D shell map.
+	// A live Cocoa resize needs geometry updates, not a menu/game-mode transition.
+	// Keeping the existing menu is also safer than mixing a new Shell generation
+	// with the current shell-map GameLogic session. Reflow only the state that owns
+	// the UI: all active scripted Shell windows in the menu, or only Control Bar
+	// windows during gameplay. Neither path creates or deletes a window.
+	if (shellWasActive && !movieIsPlaying) {
+		TheShell->onResolutionChanged();
+		extern void GeneralsX_ReflowShellWindows(void);
+		GeneralsX_ReflowShellWindows();
+		// Dynamic skirmish combo-box children and map start markers are positioned
+		// after the .wnd is parsed, so finish their layout after the scripted pass.
+		NotifySkirmishGameOptionsResolutionChanged();
 	}
 	if (TheInGameUI) {
-		TheInGameUI->recreateControlBar();
+		if (!shellWasActive) {
+			TheInGameUI->relayoutControlBar();
+		}
 		TheInGameUI->refreshCustomUiResources();
 	}
-	if (TheTacticalView) {
+	NotifyExtrasMenuResolutionChanged();
+	if (TheTacticalView && shellWasActive && !movieIsPlaying) {
 		// Matches the stock path: keep the camera limits and zoom consistent with the new resolution
-		// without disturbing a scripted camera, which gets reset at game start anyway.
+		// for the shell map. A live match owns real user camera state, so resizing must not reset it.
 		TheTacticalView->setCameraHeightAboveGroundLimitsToDefault();
 		TheTacticalView->setZoomToMax();
 	}

@@ -48,6 +48,10 @@
 // PUBLIC DATA ////////////////////////////////////////////////////////////////////////////////////
 Shell *TheShell = nullptr;  ///< the shell singleton definition
 
+#if defined(__APPLE__)
+static UnsignedInt s_gxLastShellResolutionChangeTime = 0;
+#endif
+
 
 // PUBLIC FUNCTIONS ///////////////////////////////////////////////////////////////////////////////
 //-------------------------------------------------------------------------------------------------
@@ -289,12 +293,37 @@ void Shell::update()
 void Shell::queueShellMapRefresh()
 {
 #if defined(__APPLE__)
+	const UnsignedInt now = timeGetTime();
+	// Display transitions synthesize a focus regain while their device reset is
+	// settling. Restarting ShellMap here races UI reflow and menu animations.
+	if (s_gxLastShellResolutionChangeTime != 0 &&
+		(Int)(now - s_gxLastShellResolutionChangeTime) >= 0 &&
+		now - s_gxLastShellResolutionChangeTime < 1000)
+	{
+		fprintf(stderr, "INFO: GX ignored shell map focus refresh during display transition\n");
+		return;
+	}
 	if (m_shellMapOn && m_isShellActive)
 	{
-		m_shellMapRefreshTime = timeGetTime() + 250;
+		m_shellMapRefreshTime = now + 250;
 		fprintf(stderr, "INFO: GX queued shell map refresh after focus restore\n");
 	}
 #endif
+}
+
+//-------------------------------------------------------------------------------------------------
+void Shell::onResolutionChanged()
+{
+#if defined(__APPLE__)
+	s_gxLastShellResolutionChangeTime = timeGetTime();
+	// A focus event can precede the resize notification. It belongs to the same
+	// display transition and must not tear down/restart the live shell map.
+	m_shellMapRefreshTime = 0;
+#endif
+	// Shell animations cache absolute rest positions. Restore and forget them
+	// before the existing scripted windows are reflowed at the new resolution.
+	if (m_animateWindowManager)
+		m_animateWindowManager->reset();
 }
 
 //-------------------------------------------------------------------------------------------------

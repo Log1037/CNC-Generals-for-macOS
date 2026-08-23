@@ -193,6 +193,8 @@ public:
 #endif
 	Real m_maxCameraHeight;
 	Real m_minCameraHeight;
+	// GeneralsX @feature Codex 21/08/2026 User-selectable extension of the normal tactical zoom range.
+	Real m_maxCameraHeightScale;
 
 	Real m_terrainDrawDistanceScale;
 
@@ -283,6 +285,8 @@ public:
 	Bool m_debugSupplyCenterPlacement; ///< Dumps to log everywhere it thinks about placing a supply center
 	Bool m_debugAIObstacles;			///< Used to display AI obstacle debug information
 	Bool m_showObjectHealth;			///< debug display object health
+	// GeneralsX @feature Codex 21/08/2026 0 original, 1 damaged units, 2 all visible units.
+	Int m_healthBarDisplayMode;
 	Bool m_scriptDebug;						///< Should we attempt to load the script debugger window (.DLL)
 	Bool m_particleEdit;					///< Should we attempt to load the particle editor (.DLL)
 	Bool m_displayDebug;					///< Used to display display debug info

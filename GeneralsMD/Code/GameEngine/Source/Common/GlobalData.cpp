@@ -205,6 +205,7 @@ GlobalData* GlobalData::m_theOriginal = nullptr;
 #endif
 	{ "MaxCameraHeight",						INI::parseReal,				nullptr,			offsetof( GlobalData, m_maxCameraHeight ) },
 	{ "MinCameraHeight",						INI::parseReal,				nullptr,			offsetof( GlobalData, m_minCameraHeight ) },
+	{ "MaxCameraHeightScale",				INI::parseReal,				nullptr,			offsetof( GlobalData, m_maxCameraHeightScale ) },
 	{ "TerrainDrawDistanceScale",				INI::parseReal,				nullptr,			offsetof( GlobalData, m_terrainDrawDistanceScale ) },
 	{ "TerrainHeightAtEdgeOfMap",					INI::parseReal,				nullptr,			offsetof( GlobalData, m_terrainHeightAtEdgeOfMap ) },
 	{ "UnitDamagedThreshold",				INI::parseReal,				nullptr,			offsetof( GlobalData, m_unitDamagedThresh ) },
@@ -362,6 +363,7 @@ GlobalData* GlobalData::m_theOriginal = nullptr;
 	{ "ShowClientPhysics",				INI::parseBool,				nullptr,			offsetof( GlobalData, m_showClientPhysics ) },
 	{ "ShowTerrainNormals",				INI::parseBool,				nullptr,			offsetof( GlobalData, m_showTerrainNormals ) },
 	{ "ShowObjectHealth",						INI::parseBool,				nullptr,			offsetof( GlobalData, m_showObjectHealth ) },
+	{ "HealthBarDisplayMode",			INI::parseInt,				nullptr,			offsetof( GlobalData, m_healthBarDisplayMode ) },
 
 	{ "ParticleScale",										INI::parseReal,					nullptr,	 offsetof( GlobalData, m_particleScale ) },
 	{ "AutoFireParticleSmallPrefix",			INI::parseAsciiString,  nullptr,  offsetof( GlobalData, m_autoFireParticleSmallPrefix ) },
@@ -857,6 +859,7 @@ GlobalData::GlobalData()
 	m_showClientPhysics = TRUE;
 	m_showTerrainNormals = FALSE;
 	m_showObjectHealth = FALSE;
+	m_healthBarDisplayMode = 0;
 
 	m_particleEdit = FALSE;
 
@@ -869,6 +872,7 @@ GlobalData::GlobalData()
 #endif
 	m_minCameraHeight = 100.0f;
 	m_maxCameraHeight = 300.0f;
+	m_maxCameraHeightScale = 1.0f;
 	m_terrainDrawDistanceScale = 1.0f;
 	m_terrainHeightAtEdgeOfMap = 0.0f;
 
@@ -1217,6 +1221,11 @@ void GlobalData::parseGameDataDefinition( INI* ini )
 	TheWritableGlobalData->m_clientRetaliationModeEnabled = optionPref.getRetaliationModeEnabled();
 	TheWritableGlobalData->m_doubleClickAttackMove = optionPref.getDoubleClickAttackMoveEnabled();
 	TheWritableGlobalData->m_keyboardScrollFactor = optionPref.getScrollFactor();
+	// GeneralsX @feature Codex 21/08/2026 Restore the Extras camera and presentation controls.
+	TheWritableGlobalData->m_cameraPitch = optionPref.getCameraPitch();
+	TheWritableGlobalData->m_maxCameraHeightScale = optionPref.getMaxCameraHeightScale();
+	TheWritableGlobalData->m_terrainDrawDistanceScale = optionPref.getTerrainDrawDistanceScale();
+	TheWritableGlobalData->m_healthBarDisplayMode = optionPref.getHealthBarDisplayMode();
 	TheWritableGlobalData->m_drawScrollAnchor = optionPref.getDrawScrollAnchor();
 	TheWritableGlobalData->m_moveScrollAnchor = optionPref.getMoveScrollAnchor();
 	TheWritableGlobalData->m_defaultIP = optionPref.getLANIPAddress();

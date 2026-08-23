@@ -123,6 +123,7 @@ public:
 	//===============================================================================================
 
 	void recreateWindowLayouts();
+	void onResolutionChanged();
 
 	void showShellMap(Bool useShellMap );										///< access function to turn on and off the shell map
 	void queueShellMapRefresh();												///< rebuild shell map after a native window restore

@@ -63,6 +63,7 @@
 #include "GameClient/KeyDefs.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/Shell.h"
+#include "GameClient/View.h"
 #include "GameClient/WindowLayout.h"
 #include "GameLogic/GameLogic.h"
 #include "Common/Registry.h"
@@ -84,8 +85,8 @@ static const Int PANEL_WIDTH = 400;
 // and everything under the rows moved down by exactly one ROW_STRIDE.
 //
 // There is deliberately no PANEL_HEIGHT constant. The height follows the last element, which is the
-// footer, and the footer is measured from its font at runtime rather than fixed in design units --
-// see the footerH calculation in buildPanel. In design units the panel comes to
+// transient-notice footer, and the footer is measured from its font at runtime rather than fixed in
+// design units -- see the footerH calculation in buildPanel. In design units the panel comes to
 // FOOTER_TOP 348 + FOOTER_HEIGHT 18 + PANEL_MARGIN 16 = 382, but a face whose cell is taller than
 // FOOTER_HEIGHT makes both the footer and the panel grow together, which is the whole point.
 static const Int PANEL_MARGIN = 16;
@@ -133,7 +134,8 @@ static const Int BUTTON_WIDTH = 112;
 static const Int BUTTON_HEIGHT = 22;
 static const Int BUTTON_GAP = 12;
 
-// The status line under the buttons, reporting measured FPS and logic steps.
+// The normally empty line under the buttons is reserved for short save/error confirmations. Live
+// FPS and logic-step telemetry used to be drawn here, but constantly changing text was distracting.
 //
 // GeneralsX @bugfix 10/08/2026 This was the one box the CJK sizing pass above missed, because its
 // height was written as a bare literal at the call site instead of a named constant here. It held
@@ -153,7 +155,7 @@ enum ExtrasRow CPP_11(: Int)
 	ROW_GAME_SPEED,					///< simulation speed, in tenths of the retail 30 Hz cadence
 	ROW_CAMERA_PITCH,				///< camera pitch angle
 	ROW_SCROLL_SPEED,				///< keyboard/edge scroll factor, percent
-	ROW_DRAW_DISTANCE,			///< terrain draw distance, percent
+	ROW_MAX_ZOOM,					///< maximum user camera height, percent of the normal limit
 	ROW_MONEY,							///< trainer: the local player's cash, live, single player only
 
 	ROW_COUNT
@@ -176,7 +178,7 @@ static const RowDef s_rows[ROW_COUNT] =
 	{ "GUI:GXGameSpeed",		L"Game speed",				L"游戏速度",		5,		60 },
 	{ "GUI:GXCameraPitch",	L"Camera pitch",			L"镜头俯角",		20,		60 },
 	{ "GUI:GXScrollSpeed",	L"Scroll speed",			L"卷屏速度",		1,		200 },
-	{ "GUI:GXDrawDistance",	L"Draw distance",			L"绘制距离",		100,	200 },
+	{ "GUI:GXMaxZoom",			L"Maximum zoom range",	L"最大缩放范围",	100,	150 },
 	{ "GUI:GXMoney",				L"Money",							L"资金",				0,		500000 },
 };
 
@@ -184,7 +186,29 @@ static const RowDef s_rows[ROW_COUNT] =
 // A saved local preference may still use 2.2x, but Defaults means 60 render FPS with the original
 // 30 Hz simulation instead of silently accelerating a fresh install. The money entry remains a
 // placeholder and is never applied by the Defaults button.
-static const Int s_rowDefaults[ROW_COUNT] = { 60, 10, 37, 100, 105, 0 };
+static const Int s_rowDefaults[ROW_COUNT] = { 60, 10, 37, 100, 100, 0 };
+
+// GeneralsX @feature Codex 21/08/2026 Keep specialist controls on a second page. The first entry is
+// the manual minimum terrain range; ordinary zooming raises the effective range automatically.
+enum MoreRow CPP_11(: Int)
+{
+	MORE_ROW_DRAW_DISTANCE = 0,
+	MORE_ROW_HEALTH_BARS,
+	MORE_ROW_COUNT
+};
+
+static const RowDef s_moreRows[MORE_ROW_COUNT] =
+{
+	{ "GUI:GXDrawDistance", L"Minimum draw distance", L"最低绘制距离", 100, 200 },
+	{ "GUI:GXHealthBars", L"Health bars", L"单位血条", 0, 2 },
+};
+static const Int s_moreRowDefaults[MORE_ROW_COUNT] = { 100, 0 };
+
+enum ExtrasPage CPP_11(: Int)
+{
+	EXTRAS_PAGE_MAIN = 0,
+	EXTRAS_PAGE_MORE,
+};
 
 // PANEL STATE ////////////////////////////////////////////////////////////////////////////////////
 
@@ -199,7 +223,29 @@ static GameWindow *s_buttonSave = nullptr;
 static GameWindow *s_buttonClose = nullptr;
 static GameWindow *s_modeLabel = nullptr;
 static GameWindow *s_buttonMode = nullptr;
+static GameWindow *s_buttonMore = nullptr;
+static GameWindow *s_buttonBack = nullptr;
+static GameWindow *s_moreRowLabel[MORE_ROW_COUNT] = { nullptr };
+static GameWindow *s_moreRowSlider[MORE_ROW_COUNT] = { nullptr };
+static const Int HEALTH_MODE_COUNT = 3;
+static GameWindow *s_healthModeButton[HEALTH_MODE_COUNT] = { nullptr };
+static ExtrasPage s_activePage = EXTRAS_PAGE_MAIN;
 static Bool s_registeredWithInGameUI = FALSE;
+enum FooterNotice CPP_11(: Int)
+{
+	FOOTER_NOTICE_NONE = 0,
+	FOOTER_NOTICE_SAVED,
+	FOOTER_NOTICE_SAVE_FAILED,
+	FOOTER_NOTICE_SCALE_FAILED,
+};
+static FooterNotice s_footerNotice = FOOTER_NOTICE_NONE;
+static UnsignedInt s_footerNoticeUntil = 0;
+static Bool s_pendingResolutionRebuild = FALSE;
+static ExtrasPage s_pendingResolutionPage = EXTRAS_PAGE_MAIN;
+// A clarity switch changes both the render coordinate system and every UI hit-test coordinate.
+// Store the requested mode rather than applying it from the button's mouse-up callback. The engine
+// consumes it at the beginning of a later outer tick, after the old input dispatch has unwound.
+static Int s_pendingScaleMode = -1;
 
 
 // LOCALIZATION ///////////////////////////////////////////////////////////////////////////////////
@@ -255,6 +301,7 @@ extern void GeneralsX_SetRenderScalePercent(int percent);
 extern int GeneralsX_GetRenderScalePercent(void);
 extern Bool GeneralsX_ApplyRenderScaleToWindow(void);
 extern Bool GeneralsX_GetWindowPointSize(int& pointW, int& pointH);
+extern Bool GeneralsX_GetWindowPositionInPoints(int& pointX, int& pointY);
 extern Bool GeneralsX_GetFullscreenRenderSize(int& outW, int& outH);
 
 // GeneralsX @tweak 10/08/2026 The two clarity paths, which exist for two DIFFERENT reasons. Only one
@@ -326,34 +373,24 @@ static Int getScaleMode()
 {
 	// GeneralsX @bugfix 27/07/2026 Read the live value, not the file.
 	//
-	// The mode is applied immediately but only written to Options.ini by the Save button, so the file
-	// is the *saved* mode and no longer answers "which mode am I in right now". Asking the display
-	// layer does, and it is the same value every sizing path uses, so the label cannot disagree with
-	// what is on screen.
+	// During a deferred display reset the file can still contain the preceding mode, so it does not
+	// answer "which mode am I in right now". Asking the display layer does, and it is the same value
+	// every sizing path uses, so the label cannot disagree with what is on screen.
 	return (GeneralsX_GetRenderScalePercent() >= 100) ? SCALE_MODE_NATIVE : SCALE_MODE_POINT;
 }
 
 //-------------------------------------------------------------------------------------------------
-/** Switch modes: persist the choice, then apply it live when the display can take it.
-	* Returns TRUE if the change took effect now, FALSE if it was only saved for the next launch.
+/** Switch modes and apply the choice live when the display can take it.
+	* Returns TRUE if the change took effect now, FALSE if the display rejected it.
 	*
-	* Live application is fullscreen only, and deliberately so. In windowed mode SDL3Main already
-	* treats the configured resolution as physical pixels and sizes the window to resolution/density
-	* points, which is point-for-point by construction -- the window is the pixel grid. Re-applying a
-	* render scale there would just resize the user's window, which is not what a clarity switch is
-	* supposed to do. */
+	* Persistence is deliberately handled after this returns successfully. A scale change rebuilds
+	* the display and closes Extras, so requiring a separate Remember click after it would mean asking
+	* the player to reopen the panel merely to keep the mode they just selected. */
 //-------------------------------------------------------------------------------------------------
 static Bool applyScaleMode( Int mode )
 {
 	const Int percent = (mode == SCALE_MODE_POINT) ? pointModePercent() : 100;
-
-	// GeneralsX @bugfix 27/07/2026 Apply now, persist only when the user saves.
-	//
-	// This used to write Options.ini on every toggle, which made a throwaway experiment permanent: the
-	// mode you happened to leave the panel in became the mode you launched in next time, with no way to
-	// back out. Every other row in this panel already works the other way round -- the slider moves the
-	// live value and Save is what commits it -- so the mode button now follows the same rule. Nothing
-	// here touches the file; savePreferences writes the live percentage.
+	const Int oldPercent = GeneralsX_GetRenderScalePercent();
 
 	if (!TheDisplay) {
 		return FALSE;
@@ -368,7 +405,11 @@ static Bool applyScaleMode( Int mode )
 	// upscaling by 2. An earlier version resized the window instead, which is what made 50% render
 	// the game at double size with the window framing only its top-left corner.
 	if (TheDisplay->getWindowed()) {
-		return GeneralsX_ApplyRenderScaleToWindow();
+		if (GeneralsX_ApplyRenderScaleToWindow()) {
+			return TRUE;
+		}
+		GeneralsX_SetRenderScalePercent(oldPercent);
+		return FALSE;
 	}
 
 	// GeneralsX @bugfix 10/08/2026 Ask the display layer for the target instead of recomputing it.
@@ -379,6 +420,7 @@ static Bool applyScaleMode( Int mode )
 	// from disagreeing about what point mode means.
 	Int targetW = 0, targetH = 0;
 	if (!GeneralsX_GetFullscreenRenderSize(targetW, targetH)) {
+		GeneralsX_SetRenderScalePercent(oldPercent);
 		return FALSE;
 	}
 	if ((Int)TheDisplay->getWidth() == targetW && (Int)TheDisplay->getHeight() == targetH) {
@@ -393,6 +435,7 @@ static Bool applyScaleMode( Int mode )
 	if (!TheDisplay->setDisplayMode(targetW, targetH, TheDisplay->getBitDepth(), FALSE)) {
 		fprintf(stderr, "WARNING: ExtrasMenu: scale mode %d -> %dx%d rejected, staying at %dx%d\n",
 			mode, targetW, targetH, oldW, oldH);
+		GeneralsX_SetRenderScalePercent(oldPercent);
 		return FALSE;
 	}
 
@@ -400,12 +443,8 @@ static Bool applyScaleMode( Int mode )
 		TheWritableGlobalData->m_xResolution = targetW;
 		TheWritableGlobalData->m_yResolution = targetH;
 	}
-	if (TheHeaderTemplateManager) {
-		TheHeaderTemplateManager->onResolutionChanged();
-	}
-	if (TheMouse) {
-		TheMouse->onResolutionChanged();
-	}
+	extern void GeneralsX_NotifyResolutionChanged(void);
+	GeneralsX_NotifyResolutionChanged();
 
 	fprintf(stderr, "INFO: ExtrasMenu: scale mode %s applied, %dx%d -> %dx%d (percent %d)\n",
 		(mode == SCALE_MODE_POINT) ? "POINT" : "NATIVE", oldW, oldH, targetW, targetH, percent);
@@ -540,8 +579,8 @@ static Int getLiveRowValue( Int row )
 		case ROW_SCROLL_SPEED:
 			return TheGlobalData ? REAL_TO_INT_FLOOR(TheGlobalData->m_keyboardScrollFactor * 100.0f + 0.5f) : s_rowDefaults[row];
 
-		case ROW_DRAW_DISTANCE:
-			return TheGlobalData ? REAL_TO_INT_FLOOR(TheGlobalData->m_terrainDrawDistanceScale * 100.0f + 0.5f) : s_rowDefaults[row];
+		case ROW_MAX_ZOOM:
+			return TheGlobalData ? REAL_TO_INT_FLOOR(TheGlobalData->m_maxCameraHeightScale * 100.0f + 0.5f) : s_rowDefaults[row];
 
 		case ROW_MONEY:
 		{
@@ -555,6 +594,25 @@ static Int getLiveRowValue( Int row )
 		}
 	}
 	return s_rowDefaults[row];
+}
+
+//-------------------------------------------------------------------------------------------------
+static Int getLiveMoreRowValue( Int row )
+{
+	switch (row)
+	{
+		case MORE_ROW_DRAW_DISTANCE:
+			return TheGlobalData
+				? REAL_TO_INT_FLOOR(TheGlobalData->m_terrainDrawDistanceScale * 100.0f + 0.5f)
+				: s_moreRowDefaults[row];
+
+		case MORE_ROW_HEALTH_BARS:
+			return TheGlobalData
+				? clamp<Int>(s_moreRows[row].minValue,
+					TheGlobalData->m_healthBarDisplayMode, s_moreRows[row].maxValue)
+				: s_moreRowDefaults[row];
+	}
+	return s_moreRowDefaults[row];
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -603,6 +661,21 @@ static void applyRowValue( Int row, Int value )
 			if (TheWritableGlobalData) {
 				TheWritableGlobalData->m_cameraPitch = (Real)value;
 			}
+			if (TheTacticalView)
+			{
+				// GeneralsX @feature Codex 21/08/2026 Make the existing pitch preference a live
+				// tactical-camera control. Always update the cached default so later camera resets
+				// and new matches use it, but do not disturb a locked, scripted, or cinematic view.
+				TheTacticalView->setDefaultPitch(DEG_TO_RADF((Real)value));
+				if (TheGameLogic &&
+					GameLogic::isInInteractiveGame(TheGameLogic->getGameMode()) &&
+					TheTacticalView->isUserControlled() &&
+					!TheTacticalView->isUserControlLocked() &&
+					!TheTacticalView->isDoingScriptedCamera())
+				{
+					TheTacticalView->setPitchToDefault();
+				}
+			}
 			break;
 		}
 
@@ -614,10 +687,15 @@ static void applyRowValue( Int row, Int value )
 			break;
 		}
 
-		case ROW_DRAW_DISTANCE:
+		case ROW_MAX_ZOOM:
 		{
 			if (TheWritableGlobalData) {
-				TheWritableGlobalData->m_terrainDrawDistanceScale = (Real)value / 100.0f;
+				TheWritableGlobalData->m_maxCameraHeightScale = (Real)value / 100.0f;
+			}
+			if (TheTacticalView) {
+				// Recalculate the limit live, but leave the current height alone. The player can continue
+				// outward with the normal zoom control, and a shell/cinematic camera is not interrupted.
+				TheTacticalView->setCameraHeightAboveGroundLimitsToDefault();
 			}
 			break;
 		}
@@ -639,6 +717,33 @@ static void applyRowValue( Int row, Int value )
 				money->deposit(target - current, FALSE, FALSE);
 			} else if (target < current) {
 				money->withdraw(current - target, FALSE);
+			}
+			break;
+		}
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+static void applyMoreRowValue( Int row, Int value )
+{
+	value = clamp<Int>(s_moreRows[row].minValue, value, s_moreRows[row].maxValue);
+
+	switch (row)
+	{
+		case MORE_ROW_DRAW_DISTANCE:
+		{
+			if (TheWritableGlobalData) {
+				TheWritableGlobalData->m_terrainDrawDistanceScale = (Real)value / 100.0f;
+			}
+			break;
+		}
+
+		case MORE_ROW_HEALTH_BARS:
+		{
+			// GeneralsX @feature Codex 21/08/2026 This is presentation-only state. Drawable
+			// reads it while drawing visible objects; no Object or lockstep simulation data changes.
+			if (TheWritableGlobalData) {
+				TheWritableGlobalData->m_healthBarDisplayMode = value;
 			}
 			break;
 		}
@@ -707,6 +812,134 @@ static void refreshAllRowLabels()
 {
 	for (Int row = 0; row < ROW_COUNT; ++row) {
 		refreshRowLabel(row);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+static void refreshMoreRowLabel( Int row )
+{
+	if (!s_moreRowLabel[row] || !TheGameText) {
+		return;
+	}
+
+	const UnicodeString name = panelText(s_moreRows[row].textLabel,
+		s_moreRows[row].fallback, s_moreRows[row].fallbackZh);
+	if (row == MORE_ROW_HEALTH_BARS)
+	{
+		static const char *modeLabels[HEALTH_MODE_COUNT] =
+		{
+			"GUI:GXHealthBarsOriginal",
+			"GUI:GXHealthBarsDamaged",
+			"GUI:GXHealthBarsAlways",
+		};
+		static const WideChar *modeFallbacks[HEALTH_MODE_COUNT] =
+		{
+			L"Original",
+			L"Damaged",
+			L"Always",
+		};
+		static const WideChar *modeFallbacksZh[HEALTH_MODE_COUNT] =
+		{
+			L"原版",
+			L"受伤时",
+			L"始终显示",
+		};
+		const Int selectedMode = clamp<Int>(0, getLiveMoreRowValue(row), HEALTH_MODE_COUNT - 1);
+		const UnicodeString selectedModeText = panelText(modeLabels[selectedMode],
+			modeFallbacks[selectedMode], modeFallbacksZh[selectedMode]);
+		UnicodeString labelText;
+		labelText.format(L"%s:  %s", name.str(), selectedModeText.str());
+		GadgetStaticTextSetText(s_moreRowLabel[row], labelText);
+
+		for (Int mode = 0; mode < HEALTH_MODE_COUNT; ++mode)
+		{
+			if (!s_healthModeButton[mode]) {
+				continue;
+			}
+			const UnicodeString modeText = panelText(modeLabels[mode], modeFallbacks[mode], modeFallbacksZh[mode]);
+			if (mode == selectedMode)
+			{
+				UnicodeString selectedText;
+				selectedText.format(L"[%s]", modeText.str());
+				GadgetButtonSetText(s_healthModeButton[mode], selectedText);
+			}
+			else
+			{
+				GadgetButtonSetText(s_healthModeButton[mode], modeText);
+			}
+		}
+		return;
+	}
+
+	if (!s_moreRowSlider[row]) {
+		return;
+	}
+	const Int value = GadgetSliderGetPosition(s_moreRowSlider[row]);
+	UnicodeString text;
+	text.format(L"%s:  %d%%", name.str(), value);
+	GadgetStaticTextSetText(s_moreRowLabel[row], text);
+}
+
+//-------------------------------------------------------------------------------------------------
+static void refreshAllMoreRowLabels()
+{
+	for (Int row = 0; row < MORE_ROW_COUNT; ++row) {
+		refreshMoreRowLabel(row);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Switch between the ordinary controls and the expandable specialist page without rebuilding the
+	* panel. Hiding existing children is input-safe and leaves room for more advanced rows later. */
+//-------------------------------------------------------------------------------------------------
+static void showPage( ExtrasPage page )
+{
+	s_activePage = page;
+	const Bool showMain = page == EXTRAS_PAGE_MAIN;
+
+	for (Int row = 0; row < ROW_COUNT; ++row)
+	{
+		if (s_rowLabel[row]) {
+			s_rowLabel[row]->winHide(!showMain);
+		}
+		if (s_rowSlider[row]) {
+			s_rowSlider[row]->winHide(!showMain);
+		}
+	}
+
+	for (Int row = 0; row < MORE_ROW_COUNT; ++row)
+	{
+		if (s_moreRowLabel[row]) {
+			s_moreRowLabel[row]->winHide(showMain);
+		}
+		if (s_moreRowSlider[row]) {
+			s_moreRowSlider[row]->winHide(showMain);
+		}
+	}
+	for (Int mode = 0; mode < HEALTH_MODE_COUNT; ++mode) {
+		if (s_healthModeButton[mode]) {
+			s_healthModeButton[mode]->winHide(showMain);
+		}
+	}
+
+	if (s_modeLabel) {
+		s_modeLabel->winHide(!showMain);
+	}
+	if (s_buttonMode) {
+		s_buttonMode->winHide(!showMain);
+	}
+	if (s_buttonMore) {
+		s_buttonMore->winHide(!showMain);
+	}
+	if (s_buttonBack) {
+		s_buttonBack->winHide(showMain);
+	}
+
+	if (s_titleLabel)
+	{
+		GadgetStaticTextSetText(s_titleLabel, showMain
+			? panelText("GUI:GXCadenceTitle", L"Display and Game Speed", L"画面与速度设置")
+			: panelText("GUI:GXMoreSettingsTitle", L"More Settings", L"更多设置"));
 	}
 }
 
@@ -790,68 +1023,139 @@ static void refreshModeLabel()
 }
 
 //-------------------------------------------------------------------------------------------------
-/** Report what the renderer and the simulation are actually achieving.
-	* The slider says what was asked for; this line says what is being delivered, which is the only
-	* way to tell whether a 240 FPS cap is doing anything on this machine. */
+/** Dismiss the transient footer immediately, for example when the player starts another edit. */
+//-------------------------------------------------------------------------------------------------
+static void clearFooterNotice()
+{
+	s_footerNotice = FOOTER_NOTICE_NONE;
+	s_footerNoticeUntil = 0;
+	if (s_footerLabel) {
+		GadgetStaticTextSetText(s_footerLabel, UnicodeString());
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Show a short save/error confirmation, or clear it once its deadline has passed.
+	* There is deliberately no default live telemetry: rapidly changing FPS and logic-step text made
+	* the otherwise static settings panel flicker without helping normal play. */
 //-------------------------------------------------------------------------------------------------
 static void refreshFooterLabel()
 {
 	if (!s_footerLabel || !TheGameText) {
 		return;
 	}
-
-	UnicodeString text;
-
-	if (TheFramePacer) {
-		const Int measuredFps = REAL_TO_INT_FLOOR(TheFramePacer->getUpdateFps() + 0.5f);
-		const Int steps = TheFramePacer->getLogicStepsThisFrame();
-		text = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:GXCadenceStatus",
-			localFallback(L"Measured: %d FPS, %d logic step(s) per frame",
-										L"实测：%d FPS，每帧 %d 个逻辑步"), measuredFps, steps);
+	if (s_footerNotice == FOOTER_NOTICE_NONE) {
+		return;
 	}
 
-	GadgetStaticTextSetText(s_footerLabel, text);
+	UnicodeString text;
+	const UnsignedInt now = timeGetTime();
+	if (now < s_footerNoticeUntil)
+	{
+		if (s_footerNotice == FOOTER_NOTICE_SAVED) {
+			text = panelText("GUI:GXSettingsRemembered",
+				L"Remembered for future launches.", L"设置已保存，今后启动时继续使用。");
+		} else if (s_footerNotice == FOOTER_NOTICE_SAVE_FAILED) {
+			text = panelText("GUI:GXSettingsSaveFailed",
+				L"Could not save Options.ini.", L"无法保存 Options.ini。");
+		} else {
+			text = panelText("GUI:GXScaleModeRejected",
+				L"Could not switch mode right now.", L"当前无法切换模式。");
+		}
+		GadgetStaticTextSetText(s_footerLabel, text);
+		return;
+	}
+	clearFooterNotice();
 }
 
 // PERSISTENCE ////////////////////////////////////////////////////////////////////////////////////
 
 //-------------------------------------------------------------------------------------------------
-/** Write the current slider positions to Options.ini.
-	* Only the two cadence keys are port specific; the other three already have retail preference
-	* keys that the options screen and GlobalData read back on the next launch. */
+/** Write the current live settings to Options.ini.
+	*
+	* GeneralsX @bugfix 14/08/2026 Do not read the controls back here. A point/HiDPI reset must close
+	* this panel before rebuilding the display, and the current presentation state also changes through
+	* native macOS window controls outside this menu. Reading the engine's live state makes Remember
+	* one coherent snapshot instead of a partial copy of whichever gadgets still happen to exist. */
 //-------------------------------------------------------------------------------------------------
-static void savePreferences()
+static Bool savePreferences()
 {
 	OptionPreferences pref;
 	AsciiString value;
 
-	value.format("%d", GadgetSliderGetPosition(s_rowSlider[ROW_RENDER_FPS]));
+	value.format("%d", getLiveRowValue(ROW_RENDER_FPS));
 	pref["GXRenderFPS"] = value;
 
-	value.format("%d", GadgetSliderGetPosition(s_rowSlider[ROW_GAME_SPEED]));
+	value.format("%d", getLiveRowValue(ROW_GAME_SPEED));
 	pref["GXGameSpeedTenths"] = value;
 
-	value.format("%d", GadgetSliderGetPosition(s_rowSlider[ROW_CAMERA_PITCH]));
+	value.format("%d", getLiveRowValue(ROW_CAMERA_PITCH));
 	pref["CameraPitch"] = value;
 
-	value.format("%d", GadgetSliderGetPosition(s_rowSlider[ROW_SCROLL_SPEED]));
+	value.format("%d", getLiveRowValue(ROW_SCROLL_SPEED));
 	pref["ScrollFactor"] = value;
 
-	value.format("%d", GadgetSliderGetPosition(s_rowSlider[ROW_DRAW_DISTANCE]));
+	value.format("%.2f", (Real)getLiveRowValue(ROW_MAX_ZOOM) / 100.0f);
+	pref["MaxCameraHeightScale"] = value;
+
+	// Store the engine scale, not the slider's percentage. Earlier candidates wrote 105 for 1.05.
+	value.format("%.2f", (Real)getLiveMoreRowValue(MORE_ROW_DRAW_DISTANCE) / 100.0f);
 	pref["TerrainDrawDistanceScale"] = value;
+
+	value.format("%d", getLiveMoreRowValue(MORE_ROW_HEALTH_BARS));
+	pref["HealthBarDisplayMode"] = value;
 
 	// ROW_MONEY is deliberately absent. It is live game state, not a setting: persisting it would
 	// mean a saved "preference" that silently hands the player cash at the start of every session.
 
 #ifdef GX_HAS_SCALE_MODE
-	// GeneralsX @bugfix 27/07/2026 The clarity mode commits here, with everything else. The button
-	// applies it live so it can be judged on screen; this is what makes the choice outlive the session.
 	value.format("%d", GeneralsX_GetRenderScalePercent());
 	pref["GXRenderScalePercent"] = value;
+
+	// GeneralsX @feature 14/08/2026 Remember the live macOS presentation mode for the launcher.
+	// The launcher used to pass -fullscreen unconditionally, so a native Ctrl+Cmd+F/green-button
+	// transition could never outlive this process even after the player explicitly chose Remember.
+	pref["GXWindowed"] = TheDisplay && TheDisplay->getWindowed() ? "yes" : "no";
+
+	// Save a manually resized window as the next windowed resolution. In fullscreen m_xResolution can
+	// be the panel-sized render target injected at launch; writing that would destroy the last useful
+	// window size, so a fullscreen snapshot deliberately leaves Resolution alone.
+	if (TheDisplay && TheDisplay->getWindowed() && TheGlobalData &&
+		TheGlobalData->m_xResolution > 0 && TheGlobalData->m_yResolution > 0)
+	{
+		value.format("%d %d", TheGlobalData->m_xResolution, TheGlobalData->m_yResolution);
+		pref["Resolution"] = value;
+
+		// GeneralsX @feature 14/08/2026 Remember the content window's position in macOS points.
+		// Size alone made every launch begin wherever Cocoa placed the bootstrap window, which could
+		// overlap the Dock even when the player had carefully fitted and positioned it beforehand.
+		Int pointX = 0, pointY = 0;
+		if (GeneralsX_GetWindowPositionInPoints(pointX, pointY)) {
+			value.format("%d %d", pointX, pointY);
+			pref["GXWindowPosition"] = value;
+		}
+	}
 #endif
 
-	pref.write();
+	return pref.write();
 }
+
+#ifdef GX_HAS_SCALE_MODE
+//-------------------------------------------------------------------------------------------------
+/** Persist only a successfully applied clarity mode.
+	*
+	* The display reset intentionally closes Extras, so this one setting cannot reasonably wait for a
+	* later Remember click. Other live previews remain session-only until Remember is selected. */
+//-------------------------------------------------------------------------------------------------
+static Bool saveScaleModePreference()
+{
+	OptionPreferences pref;
+	AsciiString value;
+	value.format("%d", GeneralsX_GetRenderScalePercent());
+	pref["GXRenderScalePercent"] = value;
+	return pref.write();
+}
+#endif
 
 // PANEL CONSTRUCTION /////////////////////////////////////////////////////////////////////////////
 
@@ -1144,6 +1448,39 @@ static Bool buildPanel()
 		}
 	}
 
+	// The second page is created once and hidden, rather than destroying and rebuilding child windows
+	// from a button callback. Its empty rows intentionally leave room for future specialist settings.
+	for (Int row = 0; row < MORE_ROW_COUNT; ++row)
+	{
+		const Int rowY = scaleValue(ROW_TOP + row * ROW_STRIDE, scale);
+		s_moreRowLabel[row] = createLabel(s_panel, contentX, rowY,
+			contentW, scaleValue(ROW_LABEL_HEIGHT, scale), labelFont, FALSE);
+
+		if (row == MORE_ROW_HEALTH_BARS)
+		{
+			const Int buttonGap = scaleValue(6, scale);
+			const Int buttonW = (contentW - 2 * buttonGap) / HEALTH_MODE_COUNT;
+			const Int buttonY = rowY + scaleValue(ROW_SLIDER_TOP, scale);
+			for (Int mode = 0; mode < HEALTH_MODE_COUNT; ++mode)
+			{
+				s_healthModeButton[mode] = createButton(s_panel,
+					contentX + mode * (buttonW + buttonGap), buttonY,
+					buttonW, scaleValue(MODE_BUTTON_HEIGHT, scale), buttonFont,
+					"GUI:GXHealthBarsOriginal", L"Original", L"原版");
+			}
+			continue;
+		}
+
+		s_moreRowSlider[row] = createSlider(s_panel, contentX, rowY + scaleValue(ROW_SLIDER_TOP, scale),
+			contentW, scaleValue(ROW_SLIDER_HEIGHT, scale), labelFont,
+			s_moreRows[row].minValue, s_moreRows[row].maxValue, scaleValue(ROW_THUMB_WIDTH, scale));
+
+		if (s_moreRowSlider[row]) {
+			GadgetSliderSetPosition(s_moreRowSlider[row],
+				clamp<Int>(s_moreRows[row].minValue, getLiveMoreRowValue(row), s_moreRows[row].maxValue));
+		}
+	}
+
 	// The scaling mode row. Only built where there is a point/pixel distinction to switch between:
 	// on a non HiDPI display the two modes render identically, so offering the choice would be a
 	// control that visibly does nothing.
@@ -1162,7 +1499,24 @@ static Bool buildPanel()
 	}
 #endif
 
-	// Three buttons, centred as a group.
+	// GeneralsX @feature Codex 21/08/2026 The main page links to an expandable specialist page.
+	// On HiDPI displays it shares the row with the clarity switch; elsewhere it is centred by itself.
+	const Int modeButtonW = scaleValue(MODE_BUTTON_WIDTH, scale);
+	const Int modeButtonH = scaleValue(MODE_BUTTON_HEIGHT, scale);
+	Int moreButtonX = (panelW - modeButtonW) / 2;
+	if (s_buttonMode) {
+		moreButtonX = contentX + contentW - modeButtonW;
+	}
+	s_buttonMore = createButton(s_panel, moreButtonX, scaleValue(MODE_BUTTON_TOP, scale),
+		modeButtonW, modeButtonH, buttonFont,
+		"GUI:GXMoreSettings", L"More settings", L"更多设置");
+	s_buttonBack = createButton(s_panel, (panelW - modeButtonW) / 2, scaleValue(MODE_BUTTON_TOP, scale),
+		modeButtonW, modeButtonH, buttonFont,
+		"GUI:GXBack", L"Back", L"返回");
+
+	// GeneralsX @tweak 14/08/2026 The middle action is deliberately called Remember rather
+	// than Save: every control is a live preview already, and this button's distinct job is to write
+	// those live values to Options.ini for later launches. Keep three buttons centred as a group.
 	const Int buttonW = scaleValue(BUTTON_WIDTH, scale);
 	const Int buttonH = scaleValue(BUTTON_HEIGHT, scale);
 	const Int buttonGap = scaleValue(BUTTON_GAP, scale);
@@ -1174,7 +1528,7 @@ static Bool buildPanel()
 		"GUI:GXDefaults", L"Defaults", L"默认值");
 	buttonX += buttonW + buttonGap;
 	s_buttonSave = createButton(s_panel, buttonX, buttonY, buttonW, buttonH, buttonFont,
-		"GUI:GXSave", L"Save", L"保存");
+		"GUI:GXRemember", L"Remember", L"记住设置");
 	buttonX += buttonW + buttonGap;
 	s_buttonClose = createButton(s_panel, buttonX, buttonY, buttonW, buttonH, buttonFont,
 		"GUI:GXClose", L"Close", L"关闭");
@@ -1187,7 +1541,9 @@ static Bool buildPanel()
 		contentW, footerH, labelFont, TRUE);
 
 	refreshAllRowLabels();
+	refreshAllMoreRowLabels();
 	refreshFooterLabel();
+	showPage(EXTRAS_PAGE_MAIN);
 
 	// Worth logging: this is the one place that proves the panel scaled itself to the actual display
 	// rather than to the 800x600 reference, which is the whole point of building it in code.
@@ -1240,14 +1596,27 @@ void CloseExtrasMenu( void )
 	s_buttonClose = nullptr;
 	s_modeLabel = nullptr;
 	s_buttonMode = nullptr;
+	s_buttonMore = nullptr;
+	s_buttonBack = nullptr;
+	s_activePage = EXTRAS_PAGE_MAIN;
+	s_footerNotice = FOOTER_NOTICE_NONE;
+	s_footerNoticeUntil = 0;
+	s_pendingResolutionRebuild = FALSE;
 	for (Int row = 0; row < ROW_COUNT; ++row) {
 		s_rowLabel[row] = nullptr;
 		s_rowSlider[row] = nullptr;
 	}
+	for (Int row = 0; row < MORE_ROW_COUNT; ++row) {
+		s_moreRowLabel[row] = nullptr;
+		s_moreRowSlider[row] = nullptr;
+	}
+	for (Int mode = 0; mode < HEALTH_MODE_COUNT; ++mode) {
+		s_healthModeButton[mode] = nullptr;
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
-/** Build the panel and make it live. Shared by the hotkey toggle and the post mode switch rebuild. */
+/** Build the panel and make it live. Shared by the hotkey toggle and a rejected mode switch. */
 //-------------------------------------------------------------------------------------------------
 static void openPanel( void )
 {
@@ -1260,17 +1629,16 @@ static void openPanel( void )
 		return;
 	}
 
-	// Wrap the panel in a layout so the in game UI can drive the update callback, and so teardown is
-	// a single destroyWindows call.
+	// Wrap the panel in a layout so teardown is a single destroyWindows call and the in-game UI can
+	// keep it in the same lifecycle as its other temporary layouts.
 	s_layout = newInstance(WindowLayout);
 	if (s_layout) {
 		s_layout->addWindow(s_panel);
 		s_layout->setUpdate(ExtrasMenuUpdate);
 
 		// isInGame() is also true for the shell's 3D background map, and InGameUI::update only runs
-		// registered layouts during real play, so gate on the interactive modes only. In the shell the
-		// panel simply has no update tick, which costs nothing: the status line is the only thing that
-		// wants one, and there is no simulation running to report on there anyway.
+		// registered layouts during real play, so gate on the interactive modes only. Transient footer
+		// expiry is handled by the engine's outer update and therefore works in both shell and gameplay.
 		if (TheInGameUI && TheGameLogic && GameLogic::isInInteractiveGame(TheGameLogic->getGameMode())) {
 			TheInGameUI->registerWindowLayout(s_layout);
 			s_registeredWithInGameUI = TRUE;
@@ -1286,8 +1654,7 @@ static void openPanel( void )
 
 //-------------------------------------------------------------------------------------------------
 /** Open or close the panel.
-	* Deliberately does not pause the simulation: the whole point is to watch the frame rate and the
-	* game speed change while the sliders move. */
+	* Deliberately does not pause the simulation so live slider effects remain visible. */
 //-------------------------------------------------------------------------------------------------
 void ToggleExtrasMenu( void )
 {
@@ -1299,21 +1666,74 @@ void ToggleExtrasMenu( void )
 	openPanel();
 }
 
-#ifdef GX_HAS_SCALE_MODE
 //-------------------------------------------------------------------------------------------------
-/** Tear the panel down and build it again at the current display scale.
-	* Used after a scaling mode switch, which changes the render resolution underneath the panel. */
+/** A panel built in code has no immutable .wnd geometry for the generic reflow pass. Do not destroy
+	* it from a Cocoa/SDL resize callback; remember its page and rebuild on the next outer engine tick. */
 //-------------------------------------------------------------------------------------------------
-static void RebuildExtrasMenu( void )
+void NotifyExtrasMenuResolutionChanged( void )
 {
-	if (!IsExtrasMenuVisible()) {
+	if (IsExtrasMenuVisible()) {
+		s_pendingResolutionPage = s_activePage;
+		s_pendingResolutionRebuild = TRUE;
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+/** Finish work which must not run from inside a gadget's input callback.
+	* SDL3GameEngine calls this at the beginning of a later outer tick. A render-scale change rebuilds
+	* the display coordinate system, so the
+	* old panel is closed before that work and deliberately stays closed afterwards. Keeping a window
+	* created for the old coordinate system alive across the reset is what produced the stale z-order
+	* and hit-test state seen on macOS. */
+//-------------------------------------------------------------------------------------------------
+void ProcessExtrasMenuDeferredActions( void )
+{
+	// This outer update also runs while the shell owns the screen, unlike a self-owned layout update.
+	// It only clears an expired notice once; no footer text is regenerated on ordinary frames.
+	if (s_footerNotice != FOOTER_NOTICE_NONE && timeGetTime() >= s_footerNoticeUntil) {
+		clearFooterNotice();
+	}
+
+	if (s_pendingResolutionRebuild) {
+		const ExtrasPage page = s_pendingResolutionPage;
+		s_pendingResolutionRebuild = FALSE;
+		CloseExtrasMenu();
+		openPanel();
+		if (IsExtrasMenuVisible()) {
+			showPage(page);
+		}
+	}
+
+#ifdef GX_HAS_SCALE_MODE
+	if (s_pendingScaleMode < 0) {
 		return;
 	}
 
+	const Int requestedMode = s_pendingScaleMode;
+	s_pendingScaleMode = -1;
+	const Bool reopenOnFailure = IsExtrasMenuVisible();
 	CloseExtrasMenu();
-	openPanel();
-}
+	if (applyScaleMode(requestedMode))
+	{
+		// GeneralsX @bugfix 14/08/2026 Do not resurrect UI from the old render coordinate system.
+		// Ctrl+G opens a fresh panel later if the player wants to make another adjustment.
+		// GeneralsX @feature 14/08/2026 The scale choice is the one exception to the explicit Remember
+		// action: its required display rebuild just closed that action along with the old panel.
+		if (!saveScaleModePreference()) {
+			fprintf(stderr, "WARNING: ExtrasMenu: applied clarity mode but could not save Options.ini\n");
+		}
+	}
+	else
+	{
+		if (reopenOnFailure) {
+			openPanel();
+			s_footerNotice = FOOTER_NOTICE_SCALE_FAILED;
+			s_footerNoticeUntil = timeGetTime() + 2500;
+			refreshFooterLabel();
+		}
+	}
 #endif
+}
 
 // LAYOUT CALLBACKS ///////////////////////////////////////////////////////////////////////////////
 // These stay in place because FunctionLexicon maps them by name, so a .wnd layout could still drive
@@ -1323,14 +1743,15 @@ static void RebuildExtrasMenu( void )
 void ExtrasMenuInit( WindowLayout *layout, void *userData )
 {
 	refreshAllRowLabels();
+	refreshAllMoreRowLabels();
 	refreshFooterLabel();
 }
 
 //-------------------------------------------------------------------------------------------------
 void ExtrasMenuUpdate( WindowLayout *layout, void *userData )
 {
-	// Only the measured status line needs per frame work. Slider captions are refreshed on track.
-	refreshFooterLabel();
+	// Deliberately empty. Slider changes are event-driven, and transient notices are expired from the
+	// engine's outer update so the same behaviour also works in the shell.
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1409,8 +1830,19 @@ WindowMsgHandledType ExtrasMenuSystem( GameWindow *window, UnsignedInt msg,
 			{
 				if (s_rowSlider[row] == control)
 				{
+					clearFooterNotice();
 					applyRowValue(row, sliderPos);
 					refreshRowLabel(row);
+					return MSG_HANDLED;
+				}
+			}
+			for (Int row = 0; row < MORE_ROW_COUNT; ++row)
+			{
+				if (s_moreRowSlider[row] == control)
+				{
+					clearFooterNotice();
+					applyMoreRowValue(row, sliderPos);
+					refreshMoreRowLabel(row);
 					return MSG_HANDLED;
 				}
 			}
@@ -1421,6 +1853,17 @@ WindowMsgHandledType ExtrasMenuSystem( GameWindow *window, UnsignedInt msg,
 		{
 			GameWindow *control = (GameWindow *)mData1;
 
+			for (Int mode = 0; mode < HEALTH_MODE_COUNT; ++mode)
+			{
+				if (control == s_healthModeButton[mode])
+				{
+					clearFooterNotice();
+					applyMoreRowValue(MORE_ROW_HEALTH_BARS, mode);
+					refreshMoreRowLabel(MORE_ROW_HEALTH_BARS);
+					return MSG_HANDLED;
+				}
+			}
+
 			if (control == s_buttonClose)
 			{
 				CloseExtrasMenu();
@@ -1429,25 +1872,56 @@ WindowMsgHandledType ExtrasMenuSystem( GameWindow *window, UnsignedInt msg,
 
 			if (control == s_buttonSave)
 			{
-				savePreferences();
+				s_footerNotice = savePreferences() ? FOOTER_NOTICE_SAVED : FOOTER_NOTICE_SAVE_FAILED;
+				s_footerNoticeUntil = timeGetTime() + 2500;
+				refreshFooterLabel();
 				return MSG_HANDLED;
 			}
 
 			if (control == s_buttonDefaults)
 			{
-				for (Int row = 0; row < ROW_COUNT; ++row)
+				clearFooterNotice();
+				if (s_activePage == EXTRAS_PAGE_MORE)
 				{
-					// Money is skipped on purpose: taking a player's cash away is not "restoring a
-					// default", and a misclick on this button must not be able to lose a game.
-					if (row == ROW_MONEY) {
-						continue;
+					for (Int row = 0; row < MORE_ROW_COUNT; ++row)
+					{
+						applyMoreRowValue(row, s_moreRowDefaults[row]);
+						if (s_moreRowSlider[row]) {
+							GadgetSliderSetPosition(s_moreRowSlider[row], s_moreRowDefaults[row]);
+						}
+						refreshMoreRowLabel(row);
 					}
-					applyRowValue(row, s_rowDefaults[row]);
-					if (s_rowSlider[row]) {
-						GadgetSliderSetPosition(s_rowSlider[row], s_rowDefaults[row]);
-					}
-					refreshRowLabel(row);
 				}
+				else
+				{
+					for (Int row = 0; row < ROW_COUNT; ++row)
+					{
+						// Money is skipped on purpose: taking a player's cash away is not "restoring a
+						// default", and a misclick on this button must not be able to lose a game.
+						if (row == ROW_MONEY) {
+							continue;
+						}
+						applyRowValue(row, s_rowDefaults[row]);
+						if (s_rowSlider[row]) {
+							GadgetSliderSetPosition(s_rowSlider[row], s_rowDefaults[row]);
+						}
+						refreshRowLabel(row);
+					}
+				}
+				return MSG_HANDLED;
+			}
+
+			if (control == s_buttonMore)
+			{
+				clearFooterNotice();
+				showPage(EXTRAS_PAGE_MORE);
+				return MSG_HANDLED;
+			}
+
+			if (control == s_buttonBack)
+			{
+				clearFooterNotice();
+				showPage(EXTRAS_PAGE_MAIN);
 				return MSG_HANDLED;
 			}
 
@@ -1455,30 +1929,10 @@ WindowMsgHandledType ExtrasMenuSystem( GameWindow *window, UnsignedInt msg,
 			if (control == s_buttonMode)
 			{
 				const Int next = (getScaleMode() == SCALE_MODE_POINT) ? SCALE_MODE_NATIVE : SCALE_MODE_POINT;
-				if (applyScaleMode(next))
-				{
-					// The render resolution changed, so the scale every widget was sized against is
-					// now stale and the panel has to be rebuilt at the new one.
-					//
-					// Doing that from inside this handler is safe for the same reason the Close button
-					// is: winDestroy only unlinks the window and puts it on the destroy list, and the
-					// actual free happens later in processDestroyList. Any gadget code that touches the
-					// clicked button after this returns is touching memory that is still valid.
-					RebuildExtrasMenu();
-				}
-				else
-				{
-					// GeneralsX @bugfix 27/07/2026 Rejected, and no longer silently saved either. The old
-					// text promised the change would come back on the next launch, which stopped being
-					// true once the file write moved to the Save button -- so say what actually happened.
-					refreshModeLabel();
-					if (s_footerLabel) {
-						GadgetStaticTextSetText(s_footerLabel,
-							panelText("GUI:GXScaleModeRejected",
-								L"Could not switch mode right now.",
-								L"当前无法切换模式。"));
-					}
-				}
+				// The previous candidate applied the scale here and rebuilt later in this same
+				// SDL3GameEngine::update call. That was not a later tick: the replacement panel
+				// inherited stale hover/capture coordinates and both rendering and clicks shifted.
+				s_pendingScaleMode = next;
 				return MSG_HANDLED;
 			}
 #endif

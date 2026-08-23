@@ -111,6 +111,8 @@ public:
 	//---------------------------------------------------------------------------------------
 	// Drawing management
 	virtual void setClipRegion( IRegion2D *region ) = 0;	///< Set clip rectangle for 2D draw operations.
+	// GeneralsX @feature Codex 23/08/2026 Allow Control Bar Pro to preserve nested GUI clipping.
+	virtual Bool getClipRegion( IRegion2D *region ) const { (void)region; return FALSE; }
 	virtual	Bool isClippingEnabled() = 0;
 	virtual	void enableClipping( Bool onoff ) = 0;
 

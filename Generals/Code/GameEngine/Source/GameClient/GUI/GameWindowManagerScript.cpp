@@ -123,6 +123,24 @@ static AsciiString theSystemString;
 static AsciiString theInputString;
 static AsciiString theTooltipString;
 static AsciiString theDrawString;
+static Bool useUniform43LayoutScale = FALSE;
+
+class ScopedUniform43LayoutScale
+{
+public:
+	explicit ScopedUniform43LayoutScale(Bool enable) : m_previous(useUniform43LayoutScale)
+	{
+		useUniform43LayoutScale = enable;
+	}
+
+	~ScopedUniform43LayoutScale()
+	{
+		useUniform43LayoutScale = m_previous;
+	}
+
+private:
+	Bool m_previous;
+};
 
 // default visual properties
 static Color defEnabledColor		= 0;
@@ -526,10 +544,23 @@ static Bool parseScreenRect( const char *token, char *buffer,
 	//
 	Real xScale = (Real)TheDisplay->getWidth() / (Real)createRes.x;
 	Real yScale = (Real)TheDisplay->getHeight() / (Real)createRes.y;
-	screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale);
-	screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * yScale);
-	screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale);
-	screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * yScale);
+	if (useUniform43LayoutScale)
+	{
+		const Real uniformScale = xScale < yScale ? xScale : yScale;
+		const Real offsetX = ((Real)TheDisplay->getWidth() - (Real)createRes.x * uniformScale) * 0.5f;
+		const Real offsetY = ((Real)TheDisplay->getHeight() - (Real)createRes.y * uniformScale) * 0.5f;
+		screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * uniformScale + offsetX);
+		screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * uniformScale + offsetY);
+		screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * uniformScale + offsetX);
+		screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * uniformScale + offsetY);
+	}
+	else
+	{
+		screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale);
+		screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * yScale);
+		screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale);
+		screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * yScale);
+	}
 
 	//
 	// given the screen region upper left compute the upper left that we
@@ -2695,8 +2726,10 @@ WindowLayoutInfo::WindowLayoutInfo() :
 	*/
 //=============================================================================
 GameWindow *GameWindowManager::winCreateFromScript( AsciiString filenameString,
-																										WindowLayoutInfo *info )
+																			WindowLayoutInfo *info )
 {
+	ScopedUniform43LayoutScale uniform43Layout(
+		filenameString.compareNoCase("Menus/ChallengeLoadScreen.wnd") == 0);
 	const char* filename = filenameString.str();
 	static char buffer[ WIN_BUFFER_LENGTH ]; 		// input buffer for reading
 	GameWindow *firstWindow = nullptr;
@@ -2878,4 +2911,3 @@ GameWindow *GameWindowManager::winCreateFromScript( AsciiString filenameString,
 	return firstWindow;
 
 }
-

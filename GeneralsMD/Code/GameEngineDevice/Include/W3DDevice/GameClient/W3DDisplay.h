@@ -78,6 +78,14 @@ public:
 	//---------------------------------------------------------------------------
 	// Drawing management
 	virtual void setClipRegion( IRegion2D *region ) override;	///< Set clip rectangle for 2D draw operations.
+	// GeneralsX @feature Codex 23/08/2026 Expose the active image clip for nested Control Bar Pro draws.
+	virtual Bool getClipRegion( IRegion2D *region ) const override
+	{
+		if (region == nullptr || !m_isClippedEnabled)
+			return FALSE;
+		*region = m_clipRegion;
+		return TRUE;
+	}
 	virtual Bool	isClippingEnabled() override { return m_isClippedEnabled; }
 	virtual void	enableClipping( Bool onoff ) override { m_isClippedEnabled = onoff; }
 

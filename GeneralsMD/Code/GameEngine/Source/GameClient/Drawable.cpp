@@ -3838,14 +3838,10 @@ void Drawable::drawHealthBar(const IRegion2D* healthBarRegion)
 	if (!healthBarRegion)
 		return;
 
-	//
-	// only draw health for selected drawables and drawables that have been moused over
-	// by the cursor
-	//
-	if( TheGlobalData->m_showObjectHealth &&
-			(isSelected() || (TheInGameUI && (TheInGameUI->getMousedOverDrawableID() == getID()))) )
-	{
-		Object *obj = getObject();
+	if (!TheGlobalData->m_showObjectHealth)
+		return;
+
+	Object *obj = getObject();
 
 		// if no object, nothing to do
 		if( obj == nullptr )
@@ -3865,11 +3861,26 @@ void Drawable::drawHealthBar(const IRegion2D* healthBarRegion)
 
 		// get the health and max health
 		Real health = body->getHealth();
-		Real maxHealth = body->getMaxHealth();
+	Real maxHealth = body->getMaxHealth();
 
 		// if no max health or health at all we will draw nothing
-		if( maxHealth == 0.0f || health == 0.0f )
-			return;
+	if( maxHealth == 0.0f || health == 0.0f )
+		return;
+
+	// Preserve retail selected/hover behaviour by default, with local
+	// presentation-only modes for damaged or all currently visible objects.
+	const Bool retailVisible = isSelected() ||
+		(TheInGameUI && (TheInGameUI->getMousedOverDrawableID() == getID()));
+	const Int displayMode = clamp<Int>(0, TheGlobalData->m_healthBarDisplayMode, 2);
+	// Logical weapon/support objects must not acquire automatic health bars.
+	// SELECTABLE identifies player-facing units/buildings; IGNORED_IN_GUI
+	// excludes UI proxies while leaving retail hover/selection unchanged.
+	const Bool automaticEligible = obj->isKindOf(KINDOF_SELECTABLE) &&
+		!obj->isKindOf(KINDOF_IGNORED_IN_GUI);
+	const Bool automaticVisible = automaticEligible &&
+		(displayMode == 2 || (displayMode == 1 && health < maxHealth));
+	if (!retailVisible && !automaticVisible)
+		return;
 
 		// what is our health ratio
 		Real healthRatio = health / maxHealth;
@@ -3948,8 +3959,6 @@ void Drawable::drawHealthBar(const IRegion2D* healthBarRegion)
 		TheDisplay->drawFillRect( healthBarRegion->lo.x + 1, healthBarRegion->lo.y + 1,
 															(healthBoxWidth - 2) * healthRatio, healthBoxHeight - 2,
 															color );
-	}
-
 }
 
 //-------------------------------------------------------------------------------------------------

@@ -567,6 +567,7 @@ public:  // ********************************************************************
 	static std::vector<Object*> getUniqueIdleWorkers(const ObjectList& idleWorkers);
 
 	virtual void recreateControlBar();
+	virtual void relayoutControlBar();
 	virtual void refreshCustomUiResources();
 	virtual void refreshNetworkLatencyResources();
 	virtual void refreshRenderFpsResources();

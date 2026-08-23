@@ -1093,7 +1093,8 @@ void ControlBar::init()
 		NameKeyType id;
 		id = TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ControlBarParent" );
 		m_contextParent[ CP_MASTER ] = TheWindowManager->winGetWindowFromId( nullptr, id );
-	m_contextParent[ CP_MASTER ]->winGetPosition(&m_defaultControlBarPosition.x, &m_defaultControlBarPosition.y);
+		if (m_contextParent[ CP_MASTER ])
+			m_contextParent[ CP_MASTER ]->winGetPosition(&m_defaultControlBarPosition.x, &m_defaultControlBarPosition.y);
 
 		m_scienceLayout = TheWindowManager->winCreateLayout("GeneralsExpPoints.wnd");
 		m_scienceLayout->hide(TRUE);
@@ -1262,10 +1263,14 @@ void ControlBar::init()
 		m_radarAttackGlowWindow = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("ControlBar.wnd:WinUAttack"));
 
 
-		win = TheWindowManager->winGetWindowFromId(nullptr,TheNameKeyGenerator->nameToKey( "ControlBar.wnd:BackgroundMarker" ));
-		win->winGetScreenPosition(&m_controlBarForegroundMarkerPos.x, &m_controlBarForegroundMarkerPos.y);
-		win = TheWindowManager->winGetWindowFromId(nullptr,TheNameKeyGenerator->nameToKey( "ControlBar.wnd:BackgroundMarker" ));
-		win->winGetScreenPosition(&m_controlBarBackgroundMarkerPos.x,&m_controlBarBackgroundMarkerPos.y);
+		GameWindow *backgroundMarker = TheWindowManager->winGetWindowFromId(nullptr,
+			TheNameKeyGenerator->nameToKey( "ControlBar.wnd:BackgroundMarker" ));
+		if (backgroundMarker)
+			backgroundMarker->winGetScreenPosition(&m_controlBarBackgroundMarkerPos.x, &m_controlBarBackgroundMarkerPos.y);
+		GameWindow *foregroundMarker = TheWindowManager->winGetWindowFromId(nullptr,
+			TheNameKeyGenerator->nameToKey( "ControlBar.wnd:ForegroundMarker" ));
+		if (foregroundMarker)
+			foregroundMarker->winGetScreenPosition(&m_controlBarForegroundMarkerPos.x, &m_controlBarForegroundMarkerPos.y);
 
 		if(!m_videoManager)
 			m_videoManager = NEW WindowVideoManager;
@@ -3020,6 +3025,80 @@ void ControlBar::toggleControlBarStage()
 		switchControlBarStage(CONTROL_BAR_STAGE_DEFAULT);
 }
 
+void ControlBar::onResolutionChanged()
+{
+	if (!m_controlBarSchemeManager)
+		return;
+	// The shortcut slide animation owns a cached rest position. Its old DPI or
+	// window-size coordinates must be discarded before this widget is reflowed.
+	if (m_animateWindowManagerForGenShortcuts)
+		m_animateWindowManagerForGenShortcuts->reset();
+	extern void GeneralsX_ReflowScriptWindowTree(GameWindow *window);
+	GeneralsX_ReflowScriptWindowTree(m_specialPowerShortcutParent);
+	const ControlBarStages previousStage = m_currentControlBarStage;
+	const Bool masterWasHidden =
+		!m_contextParent[CP_MASTER] || m_contextParent[CP_MASTER]->winIsHidden();
+	if (m_contextParent[CP_MASTER])
+		m_contextParent[CP_MASTER]->winGetPosition(
+			&m_defaultControlBarPosition.x, &m_defaultControlBarPosition.y);
+
+	// The foreground/background marker delta is an animation offset, not a
+	// resolution offset. The in-place .wnd reflow has just established a new
+	// default geometry, so make the current marker locations the new animation
+	// baseline. Otherwise a fullscreen/window change is added to the already
+	// scaled Pro artwork a second time and pushes it below the viewport.
+	GameWindow *backgroundMarker = TheWindowManager->winGetWindowFromId(nullptr,
+		TheNameKeyGenerator->nameToKey("ControlBar.wnd:BackgroundMarker"));
+	if (backgroundMarker)
+		backgroundMarker->winGetScreenPosition(
+			&m_controlBarBackgroundMarkerPos.x, &m_controlBarBackgroundMarkerPos.y);
+	GameWindow *foregroundMarker = TheWindowManager->winGetWindowFromId(nullptr,
+		TheNameKeyGenerator->nameToKey("ControlBar.wnd:ForegroundMarker"));
+	if (foregroundMarker)
+		foregroundMarker->winGetScreenPosition(
+			&m_controlBarForegroundMarkerPos.x, &m_controlBarForegroundMarkerPos.y);
+
+	// Recompute the current scheme against the new display size while keeping
+	// this ControlBar, its window pointers, commands and selection context alive.
+	m_controlBarSchemeManager->onResolutionChanged();
+	markUIDirty();
+
+	if (masterWasHidden || previousStage == CONTROL_BAR_STAGE_HIDDEN)
+		switchControlBarStage(CONTROL_BAR_STAGE_HIDDEN);
+	else
+		switchControlBarStage(previousStage);
+}
+
+typedef std::pair<GameWindow *, Bool> ControlBarChildVisibility;
+static std::vector<ControlBarChildVisibility> s_lowControlBarChildVisibility;
+
+static void hideControlBarChildrenExceptToggle(GameWindow *master)
+{
+	s_lowControlBarChildVisibility.clear();
+	if (master == nullptr)
+		return;
+
+	const NameKeyType toggleId = TheNameKeyGenerator->nameToKey("ControlBar.wnd:ButtonLarge");
+	for (GameWindow *child = master->winGetChild(); child != nullptr; child = child->winGetNext())
+	{
+		if (child->winGetWindowId() == toggleId)
+			continue;
+		s_lowControlBarChildVisibility.push_back(ControlBarChildVisibility(child, child->winIsHidden()));
+		child->winHide(TRUE);
+	}
+}
+
+static void restoreLowControlBarChildren()
+{
+	for (std::vector<ControlBarChildVisibility>::const_iterator it = s_lowControlBarChildVisibility.begin();
+		it != s_lowControlBarChildVisibility.end(); ++it)
+	{
+		if (it->first != nullptr)
+			it->first->winHide(it->second);
+	}
+	s_lowControlBarChildVisibility.clear();
+}
+
 // Functions for repositioning/resizing the control bar
 void ControlBar::switchControlBarStage( ControlBarStages stage )
 {
@@ -3051,9 +3130,11 @@ void ControlBar::setDefaultControlBarConfig()
 //		m_controlBarSchemeManager->setControlBarSchemeByPlayerTemplate(ThePlayerList->getLocalPlayer()->getPlayerTemplate(), FALSE);
 //	}
 	m_currentControlBarStage = CONTROL_BAR_STAGE_DEFAULT;
+	restoreLowControlBarChildren();
 	setScaledViewportHeight();
 	m_contextParent[ CP_MASTER ]->winSetPosition(m_defaultControlBarPosition.x, m_defaultControlBarPosition.y);
 	m_contextParent[ CP_MASTER ]->winHide(FALSE);
+	markUIDirty();
 	repopulateBuildTooltipLayout();
 	setUpDownImages();
 
@@ -3085,6 +3166,8 @@ void ControlBar::setLowControlBarConfig()
 	pos.x = m_defaultControlBarPosition.x;
 	pos.y = TheDisplay->getHeight() - .1 * TheDisplay->getHeight();
 	setFullViewportHeight();
+	hideControlBarChildrenExceptToggle(m_contextParent[ CP_MASTER ]);
+	hideSpecialPowerShortcut();
 	m_contextParent[ CP_MASTER ]->winSetPosition(pos.x, pos.y);
 	m_contextParent[ CP_MASTER ]->winHide(FALSE);
 	setUpDownImages();
@@ -3279,7 +3362,7 @@ void ControlBar::initSpecialPowershortcutBar( Player *player)
 	tempName.concat(":ButtonCommand%d");
 	parentName = layoutName;
 	parentName.concat(":ButtonParent%d");
-	m_currentlyUsedSpecialPowersButtons = MIN(pt->getSpecialPowerShortcutButtonCount(), MAX_SPECIAL_POWER_SHORTCUTS);
+	const Int requestedShortcutButtons = MIN(pt->getSpecialPowerShortcutButtonCount(), MAX_SPECIAL_POWER_SHORTCUTS);
 	for( i = 0; i < MAX_SPECIAL_POWER_SHORTCUTS; i++ )
 	{
 		windowName.format( tempName, i+1 );
@@ -3298,6 +3381,20 @@ void ControlBar::initSpecialPowershortcutBar( Player *player)
 			m_specialPowerShortcutButtonParents[ i ] =
 				TheWindowManager->winGetWindowFromId( m_specialPowerShortcutParent, id );
 		}
+	}
+
+	// A player template can request more shortcut buttons than its WND layout
+	// actually defines.  Boss/modified factions commonly reuse a standard side
+	// layout, so trusting only the INI count leaves null entries in the active
+	// range and crashes as soon as the bar is shown.  Use only the contiguous
+	// button/parent pairs that were resolved from the loaded layout.
+	m_currentlyUsedSpecialPowersButtons = 0;
+	for (i = 0; i < requestedShortcutButtons; ++i)
+	{
+		if (m_specialPowerShortcutButtons[i] == nullptr || m_specialPowerShortcutButtonParents[i] == nullptr)
+			break;
+
+		++m_currentlyUsedSpecialPowersButtons;
 	}
 
 }
@@ -3328,7 +3425,10 @@ void ControlBar::populateSpecialPowerShortcut( Player *player)
 	// populate the button with commands defined
 	Int currentButton = 0;
 	const CommandButton *commandButton;
-	for( i = 0; i < m_currentlyUsedSpecialPowersButtons; i++ )
+	// The number of physical windows is a display capacity, not the number of
+	// command-set entries to inspect. Mods may place eligible shortcuts after
+	// gaps or after slot 13; compact those into the available physical buttons.
+	for( i = 0; i < MAX_COMMANDS_PER_SET && currentButton < m_currentlyUsedSpecialPowersButtons; i++ )
 	{
 
 		// get command button
@@ -3372,7 +3472,7 @@ void ControlBar::populateSpecialPowerShortcut( Player *player)
 				}
 
 				//We just need to find something that has the power.
-				Object *obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPowerOfType( commandButton->getSpecialPowerTemplate()->getSpecialPowerType() );
+				Object *obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPower( commandButton->getSpecialPowerTemplate() );
 				if( !obj )
 				{
 					continue;
@@ -3584,6 +3684,12 @@ void ControlBar::updateSpecialPowerShortcut()
 	if(!m_specialPowerShortcutParent || !m_specialPowerShortcutButtons
 	   || !ThePlayerList || !ThePlayerList->getLocalPlayer())
 		return;
+	if (m_currentControlBarStage == CONTROL_BAR_STAGE_LOW ||
+		m_currentControlBarStage == CONTROL_BAR_STAGE_HIDDEN)
+	{
+		hideSpecialPowerShortcut();
+		return;
+	}
 
 	const Bool hasValidShortcutButton = canShowSpecialPowerShortcut();
 
@@ -3641,7 +3747,7 @@ void ControlBar::updateSpecialPowerShortcut()
 		Object *obj = nullptr;
 		if( spTemplate )
 		{
-			obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPowerOfType( command->getSpecialPowerTemplate()->getSpecialPowerType() );
+			obj = ThePlayerList->getLocalPlayer()->findMostReadyShortcutSpecialPower( command->getSpecialPowerTemplate() );
 			availability = getCommandAvailability( command, obj, win );
 		}
 		else if( command->getCommandType() == GUI_COMMAND_SELECT_ALL_UNITS_OF_TYPE )
@@ -3733,7 +3839,7 @@ void ControlBar::drawSpecialPowerShortcutMultiplierText()
 			Int numReady = 0;
 			if( spTemplate )
 			{
-				numReady = ThePlayerList->getLocalPlayer()->countReadyShortcutSpecialPowersOfType( spTemplate->getSpecialPowerType() );
+				numReady = ThePlayerList->getLocalPlayer()->countReadyShortcutSpecialPowers( spTemplate );
 			}
 			if( numReady > 1 ) // Lorenzen changed... Displaying a "1" is superfluous
 			{
@@ -3775,6 +3881,11 @@ void ControlBar::animateSpecialPowerShortcut( Bool isOn )
 	if(isOn)
 	{
 		m_animateWindowManagerForGenShortcuts->reset();
+		// reset() restores the previous animation's cached rest position. Reflow
+		// after that restoration, so the new animation captures current DPI and
+		// window geometry instead of dragging the shortcut into the old location.
+		extern void GeneralsX_ReflowScriptWindowTree(GameWindow *window);
+		GeneralsX_ReflowScriptWindowTree(m_specialPowerShortcutParent);
 		m_animateWindowManagerForGenShortcuts->registerGameWindow(m_specialPowerShortcutParent,WIN_ANIMATION_SLIDE_RIGHT,TRUE,500,0);
 	}
 	else

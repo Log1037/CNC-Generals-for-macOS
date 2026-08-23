@@ -417,7 +417,7 @@ enum {
 			};
 enum { MAX_STRUCTURE_INVENTORY_BUTTONS = 10 }; // there are this many physical buttons in "inventory" windows for structures
 enum { MAX_BUILD_QUEUE_BUTTONS = 9 };// physical button count for the build queue
-enum { MAX_SPECIAL_POWER_SHORTCUTS = 11};
+enum { MAX_SPECIAL_POWER_SHORTCUTS = 13};
 class CommandSet : public Overridable
 {
 
@@ -709,6 +709,7 @@ public:
 
 	void setFullViewportHeight();
 	void setScaledViewportHeight();
+	void onResolutionChanged();
 
 	/// set the control bar to the proper scheme based off a player template that's passed in
 	ControlBarSchemeManager *getControlBarSchemeManager() { return m_controlBarSchemeManager; }

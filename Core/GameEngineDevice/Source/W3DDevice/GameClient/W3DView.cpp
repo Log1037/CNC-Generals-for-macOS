@@ -185,6 +185,8 @@ W3DView::W3DView()
 	m_CameraArrivedAtWaypointOnPathFlag = false;	// Scripts for polling camera reached targets
 	m_isCameraSlaved = false;						// This is for 3DSMax camera playback
 	m_useRealZoomCam = false;						// true;	//WST 10/18/2002
+	m_baseMaxHeightAboveGround = 0.0f;
+	m_automaticTerrainDrawScale = 1.0f;
 	m_shakerAngles.X =0.0f;							// Proper camera shake generator & sources
 	m_shakerAngles.Y =0.0f;
 	m_shakerAngles.Z =0.0f;
@@ -2245,11 +2247,28 @@ void W3DView::setCameraHeightAboveGroundLimitsToDefault(Real heightScale)
 		aspectRatioScale = fabs(( 1 - ( baseAspectRatio - currentAspectRatio) ));
 	}
 
-	m_maxHeightAboveGround = TheGlobalData->m_maxCameraHeight * aspectRatioScale * heightScale;
+	// GeneralsX @feature Codex 21/08/2026 Apply the player's zoom extension only to ordinary
+	// no-argument camera resets. Script actions pass an explicit scale and retain their authored view.
+	m_baseMaxHeightAboveGround = TheGlobalData->m_maxCameraHeight * aspectRatioScale;
+	const Bool usePlayerScale = heightScale < 0.0f;
+	if (usePlayerScale) {
+		heightScale = TheGlobalData->m_maxCameraHeightScale;
+	}
+	m_maxHeightAboveGround = m_baseMaxHeightAboveGround * heightScale;
 	m_minHeightAboveGround = TheGlobalData->m_minCameraHeight * aspectRatioScale;
 
 	if (m_minHeightAboveGround > m_maxHeightAboveGround)
 		m_maxHeightAboveGround = m_minHeightAboveGround;
+
+	if (usePlayerScale)
+	{
+		m_automaticTerrainDrawScale = 1.0f;
+		if (m_isUserControlled && m_heightAboveGround > m_maxHeightAboveGround) {
+			m_heightAboveGround = m_maxHeightAboveGround;
+			m_cameraAreaConstraintsValid = false;
+			m_recalcCamera = true;
+		}
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -3764,7 +3783,24 @@ void W3DView::updateTerrain()
 		drawHeight = WorldHeightMap::LOW_ANGLE_DRAW_HEIGHT;
 	}
 
-	const Real terrainScale = TheGlobalData->m_terrainDrawDistanceScale;
+	// GeneralsX @feature Codex 21/08/2026 Grow terrain coverage only while the user is actually
+	// above the original maximum camera height. The advanced preference remains a minimum override;
+	// taking the larger value avoids multiplying two controls into an unexpectedly expensive range.
+	Real automaticTerrainScale = m_automaticTerrainDrawScale;
+	if (m_isUserControlled && m_baseMaxHeightAboveGround > 0.0f)
+	{
+		const Real currentScale = maxf(1.0f, m_currentHeightAboveGround / m_baseMaxHeightAboveGround);
+		if (currentScale <= 1.001f) {
+			m_automaticTerrainDrawScale = 1.0f;
+		} else if (currentScale > m_automaticTerrainDrawScale) {
+			// Resizing the height map reallocates its rendering data. Grow in 25% buckets and retain
+			// the high-water mark until the camera returns to the original range, avoiding a rebuild
+			// on every frame of a smooth mouse-wheel zoom.
+			m_automaticTerrainDrawScale = ceil(currentScale * 4.0f) / 4.0f;
+		}
+		automaticTerrainScale = m_automaticTerrainDrawScale;
+	}
+	const Real terrainScale = maxf(TheGlobalData->m_terrainDrawDistanceScale, automaticTerrainScale);
 	if (terrainScale != 1.0f)
 	{
 		drawWidth = static_cast<Int>(drawWidth * terrainScale);
