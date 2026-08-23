@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README.en.md)
 
+> **当前分支：`progen`。** 该分支继承 `main` 的原版/通用 macOS 改进，并追加 ProGen 26 专属源码和模组载入组合。完整清单见 [ProGen 分支当前修改](docs/PROGEN_CURRENT_CHANGES.md)。
+
 <img width="500" height="281" alt="《零点行动》在 Apple 平台运行" src="https://github.com/user-attachments/assets/aeaf6692-36e6-40c8-b9f8-8066d014ec4b" />
 
 > **上游说明：** 本仓库不是从零开始的独立移植。Apple 平台原生移植的直接基础来自 [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad)；**CNC Generals for macOS** 只代表在该上游基础上，针对维护者个人使用情境所做的增强、修复和打包工作。上游的完整项目介绍与移植历程请直接阅读其 README。
@@ -71,7 +73,7 @@ export VULKAN_SDK="$HOME/VulkanSDK/<version>/macOS"
 ### 3. 克隆、构建和部署
 
 ```bash
-git clone https://github.com/Log1037/CNC-Generals-for-macOS.git
+git clone --branch progen https://github.com/Log1037/CNC-Generals-for-macOS.git
 cd CNC-Generals-for-macOS
 
 export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
@@ -124,6 +126,7 @@ export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
 - [macOS 构建指南](docs/BUILD/MACOS.md)
 - [二次修改工程日志](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.md)
 - [模组范围与致谢](docs/MOD_SCOPE_AND_CREDITS.zh-CN.md)
+- [ProGen 分支当前修改](docs/PROGEN_CURRENT_CHANGES.md)
 - [修改与来源声明](NOTICE.md)
 - [移植工程手册](docs/port/PORTING_PLAYBOOK.md)
 - [移植方法总结](docs/port/PORTING_PATTERNS.md)

@@ -2,6 +2,8 @@
 
 [中文](README.md) | [English](README.en.md)
 
+> **Current branch: `progen`.** This branch inherits the original/shared macOS work from `main` and adds the ProGen 26 source and mod load set. See [Current ProGen branch changes](docs/PROGEN_CURRENT_CHANGES.en.md) for the complete inventory.
+
 <img width="500" height="281" alt="Zero Hour running on an Apple platform" src="https://github.com/user-attachments/assets/aeaf6692-36e6-40c8-b9f8-8066d014ec4b" />
 
 > **Upstream attribution:** This repository is not an independent port made from scratch. Its direct Apple-platform porting base is [`ammaarreshi/Generals-Mac-iOS-iPad`](https://github.com/ammaarreshi/Generals-Mac-iOS-iPad). **CNC Generals for macOS** names only the enhancements, fixes, and packaging work added for the maintainer's personal use on top of that upstream project. Please read the upstream README for its complete project description and porting history.
@@ -71,7 +73,7 @@ Install the Vulkan SDK from LunarG; Homebrew Vulkan headers alone are not suffic
 ### 3. Clone, build, and deploy
 
 ```bash
-git clone https://github.com/Log1037/CNC-Generals-for-macOS.git
+git clone --branch progen https://github.com/Log1037/CNC-Generals-for-macOS.git
 cd CNC-Generals-for-macOS
 
 export GX_RUNTIME_ROOT="$HOME/GeneralsX Runtime"
@@ -124,6 +126,7 @@ There is also a short [contribution note](CONTRIBUTING.en.md) for anyone who wan
 - [macOS build guide](docs/BUILD/MACOS.en.md)
 - [Customization engineering log](docs/WORKDIR/reports/MACOS_LOCAL_FORK_CHANGELOG.en.md)
 - [Mod scope and credits](docs/MOD_SCOPE_AND_CREDITS.md)
+- [Current ProGen branch changes](docs/PROGEN_CURRENT_CHANGES.en.md)
 - [Modification and attribution notice](NOTICE.en.md)
 - [Porting playbook](docs/port/PORTING_PLAYBOOK.md)
 - [Porting patterns](docs/port/PORTING_PATTERNS.md)
